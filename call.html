@@ -917,12 +917,12 @@ const STT_CYCLE_INTERVAL_MS = 4 * 60 * 1000;
 const STT_CYCLE_OVERLAP_MS = 300;
 
 // onendが呼ばれないまま無反応になるChromeのケース対策。onresultが
-// 30秒以上まったく来ていなければ「死んでいる」とみなし、4分サイクルと
+// 15秒以上まったく来ていなければ「死んでいる」とみなし、4分サイクルと
 // 同じ仕組み（新しい方を先に立ち上げてから古い方を止める）で強制的に
 // 張り直す。無音が続いただけでも張り直してしまうが、再起動のコストは
 // 低いので問題ない。
-const WATCHDOG_SILENCE_MS = 30 * 1000;
-const WATCHDOG_CHECK_INTERVAL_MS = 5 * 1000;
+const WATCHDOG_SILENCE_MS = 15 * 1000;
+const WATCHDOG_CHECK_INTERVAL_MS = 3 * 1000;
 
 class WebSpeechSTT {
   constructor({ lang, onInterim, onFinal, onState, onWatchdogRestart }) {
