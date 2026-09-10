@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ライブ翻訳 ステップ1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&family=Noto+Sans+KR:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e9edef;
+    --surface: #ffffff;
+    --ink: #16202a;
+    --muted: #5e6b75;
+    --line: #d3dade;
+    --ja: #2f5d8c;
+    --ko: #2f6b4f;
+    --warn: #9c3b25;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans JP", "Noto Sans KR", sans-serif;
+    line-height: 1.7;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  select, input, button {
+    font: inherit;
+    font-size: 14px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  input[type="password"] { flex: 1; min-width: 180px; }
+  button {
+    cursor: pointer;
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--surface);
+    font-weight: 500;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  button.stop { background: var(--warn); border-color: var(--warn); }
+  :focus-visible { outline: 2px solid var(--ja); outline-offset: 2px; }
+
+  #status {
+    font-size: 13px;
+    color: var(--muted);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  #status.live { color: var(--ko); }
+  #status.error { color: var(--warn); }
+
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .empty { color: var(--muted); font-size: 15px; margin: auto; text-align: center; }
+
+  .turn {
+    background: var(--surface);
+    border-left: 3px solid var(--ja);
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    max-width: 68ch;
+  }
+  .src { font-size: 14px; color: var(--muted); }
+  .dst { font-size: 22px; font-weight: 500; margin-top: 4px; }
+  .dst.pending { color: var(--muted); font-weight: 400; font-size: 16px; }
+  .dst.failed { color: var(--warn); font-size: 15px; font-weight: 400; }
+
+  #interim {
+    background: var(--surface);
+    border-left: 3px dashed var(--line);
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    color: var(--muted);
+    font-size: 16px;
+    max-width: 68ch;
+  }
+  #interim:empty { display: none; }
+  .hint { font-size: 12px; color: var(--muted); padding: 0 16px 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <select id="direction">
+    <option value="ja-ko">日本語 → 韓国語</option>
+    <option value="ko-ja">韓国語 → 日本語</option>
+  </select>
+  <input type="password" id="apikey" placeholder="Gemini APIキー" autocomplete="off">
+  <button id="toggle">開始</button>
+</header>
+
+<div id="status">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
+
+<main id="log">
+  <p class="empty">開始を押して話すと、ここに文字起こしと訳文が出ます。</p>
+</main>
+
+<p class="hint">キーはこのページを閉じると消えます。保存もどこにも送信もされません。</p>
+
+<script>
+const MODEL = "gemini-2.5-flash";
+const LANGS = {
+  "ja-ko": { src: "ja-JP", srcName: "日本語", dstName: "韓国語", color: "var(--ja)" },
+  "ko-ja": { src: "ko-KR", srcName: "韓国語", dstName: "日本語", color: "var(--ko)" }
+};
+
+const el = {
+  direction: document.getElementById("direction"),
+  apikey: document.getElementById("apikey"),
+  toggle: document.getElementById("toggle"),
+  status: document.getElementById("status"),
+  log: document.getElementById("log")
+};
+
+/* ---------- STT: 差し替え可能なインターフェース ---------- */
+/* 後で Deepgram 等に替えるときは、start/stop と同じ形の
+   クラスを書いて new する行だけ差し替えればいい。       */
+
+class WebSpeechSTT {
+  constructor({ lang, onInterim, onFinal, onState }) {
+    this.lang = lang;
+    this.onInterim = onInterim;
+    this.onFinal = onFinal;
+    this.onState = onState;
+    this.running = false;
+    this.rec = null;
+    this.restartTimer = null;
+  }
+
+  start() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      this.onState("この端末では音声認識が使えません。Chrome か Edge で開いてください。", "error");
+      return false;
+    }
+    this.running = true;
+    this._spawn(SR);
+    return true;
+  }
+
+  _spawn(SR) {
+    const rec = new SR();
+    rec.lang = this.lang;
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onstart = () => this.onState("認識中", "live");
+
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const text = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          const t = text.trim();
+          if (t) this.onFinal(t);
+        } else {
+          interim += text;
+        }
+      }
+      this.onInterim(interim);
+    };
+
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        this.running = false;
+        this.onState("マイクが許可されていません。ブラウザの設定で許可してください。", "error");
+      } else if (e.error === "audio-capture") {
+        this.running = false;
+        this.onState("マイクが見つかりません。接続を確認してください。", "error");
+      }
+      // no-speech / network / aborted は onend の再起動にまかせる
+    };
+
+    // Web Speech API は数十秒〜数分で勝手に止まる。
+    // running のあいだは張り直し続けるのがこのループ。
+    rec.onend = () => {
+      if (!this.running) {
+        this.onState("停止中");
+        return;
+      }
+      this.onState("再接続中…");
+      clearTimeout(this.restartTimer);
+      this.restartTimer = setTimeout(() => {
+        if (this.running) this._spawn(SR);
+      }, 250);
+    };
+
+    this.rec = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      this.onState("開始できません。一度停止してから押し直してください。", "error");
+    }
+  }
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.restartTimer);
+    if (this.rec) this.rec.abort();
+    this.onInterim("");
+    this.onState("停止中");
+  }
+}
+
+/* ---------- 翻訳 ---------- */
+
+const history = [];          // 直近の文脈（原文/訳文のペア）
+const queue = [];            // 順番を崩さないための直列キュー
+let draining = false;
+
+async function translate(text, conf, key) {
+  const context = history.slice(-4)
+    .map(h => `${h.src} → ${h.dst}`)
+    .join("\n");
+
+  const prompt =
+    `あなたは通話の同時通訳です。次の${conf.srcName}の発話を${conf.dstName}に訳してください。\n` +
+    `訳文だけを出力し、説明・引用符・原文は付けないこと。\n` +
+    `話し言葉として自然な口語にすること。\n` +
+    (context ? `\n直前のやりとり:\n${context}\n` : "") +
+    `\n発話: ${text}`;
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 256 }
+      })
+    }
+  );
+
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!out) throw new Error("空の応答");
+  return out.trim();
+}
+
+function enqueue(job) {
+  queue.push(job);
+  if (!draining) drain();
+}
+
+async function drain() {
+  draining = true;
+  while (queue.length) {
+    const job = queue.shift();
+    await job();
+  }
+  draining = false;
+}
+
+/* ---------- 表示 ---------- */
+
+const interimEl = document.createElement("div");
+interimEl.id = "interim";
+
+function showInterim(text) {
+  if (!text) { interimEl.remove(); return; }
+  interimEl.textContent = text;
+  el.log.appendChild(interimEl);
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+function addTurn(srcText, conf) {
+  el.log.querySelector(".empty")?.remove();
+
+  const turn = document.createElement("div");
+  turn.className = "turn";
+  turn.style.borderLeftColor = conf.color;
+
+  const src = document.createElement("div");
+  src.className = "src";
+  src.textContent = srcText;
+
+  const dst = document.createElement("div");
+  dst.className = "dst pending";
+  dst.textContent = "翻訳中…";
+
+  turn.append(src, dst);
+  el.log.insertBefore(turn, interimEl.parentNode === el.log ? interimEl : null);
+
+  // 長時間の通話でDOMが膨らむのを防ぐ
+  const turns = el.log.querySelectorAll(".turn");
+  if (turns.length > 40) turns[0].remove();
+
+  el.log.scrollTop = el.log.scrollHeight;
+  return dst;
+}
+
+/* ---------- 配線 ---------- */
+
+let stt = null;
+
+function setStatus(text, cls = "") {
+  el.status.textContent = text;
+  el.status.className = cls;
+}
+
+function handleFinal(text) {
+  const conf = LANGS[el.direction.value];
+  const key = el.apikey.value.trim();
+  const dst = addTurn(text, conf);
+
+  if (!key) {
+    dst.className = "dst failed";
+    dst.textContent = "APIキーを入れると翻訳されます";
+    return;
+  }
+
+  enqueue(async () => {
+    try {
+      const out = await translate(text, conf, key);
+      dst.className = "dst";
+      dst.textContent = out;
+      history.push({ src: text, dst: out });
+      if (history.length > 8) history.shift();
+    } catch (err) {
+      dst.className = "dst failed";
+      dst.textContent = "翻訳できませんでした（" + err.message + "）";
+    }
+    el.log.scrollTop = el.log.scrollHeight;
+  });
+}
+
+el.toggle.addEventListener("click", () => {
+  if (stt && stt.running) {
+    stt.stop();
+    stt = null;
+    el.toggle.textContent = "開始";
+    el.toggle.classList.remove("stop");
+    el.direction.disabled = false;
+    return;
+  }
+
+  const conf = LANGS[el.direction.value];
+  stt = new WebSpeechSTT({
+    lang: conf.src,
+    onInterim: showInterim,
+    onFinal: handleFinal,
+    onState: setStatus
+  });
+
+  if (stt.start()) {
+    el.toggle.textContent = "停止";
+    el.toggle.classList.add("stop");
+    el.direction.disabled = true;
+  } else {
+    stt = null;
+  }
+});
+</script>
+</body>
+</html>
