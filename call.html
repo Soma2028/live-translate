@@ -500,7 +500,9 @@ function markPeerLeft() {
 /* 音声レーン（WebRTC audio）とは完全に独立させる。
    自分のSTT確定テキストと、その翻訳結果だけを相手に送る。      */
 
-const peerPending = new Map(); // 相手の発言id -> 表示中のdst要素
+// 相手の発言id -> dst要素。翻訳完了後も削除しない。先出し翻訳の訂正が
+// 遅れて届いたときに、同じidで既存の吹き出しを見つけて上書きするため。
+const peerPending = new Map();
 
 function wireDataChannel() {
   dataChannel.onopen = () => {
@@ -524,22 +526,30 @@ function sendToPeer(obj) {
 
 function handlePeerMessage(msg) {
   if (msg.kind === "subtitle-final") {
-    const conf = LANGS[msg.direction] || LANGS["ja-ko"];
-    const dst = addTurn(msg.text, conf, true);
-    peerPending.set(msg.id, dst);
+    const existingDst = peerPending.get(msg.id);
+    if (existingDst) {
+      // 同じidの2回目以降 = 先出し翻訳の訂正。既存の吹き出しの原文を
+      // 書き換えて翻訳待ちに戻す（新しい吹き出しは作らない）。
+      const srcEl = existingDst.previousElementSibling;
+      if (srcEl) srcEl.textContent = msg.text;
+      existingDst.className = "dst pending";
+      existingDst.textContent = t("translating");
+    } else {
+      const conf = LANGS[msg.direction] || LANGS["ja-ko"];
+      const dst = addTurn(msg.text, conf, true);
+      peerPending.set(msg.id, dst);
+    }
   } else if (msg.kind === "subtitle-translated") {
     const dst = peerPending.get(msg.id);
     if (!dst) return;
     dst.className = "dst";
     dst.textContent = msg.text;
-    peerPending.delete(msg.id);
     el.log.scrollTop = el.log.scrollHeight;
   } else if (msg.kind === "subtitle-failed") {
     const dst = peerPending.get(msg.id);
     if (!dst) return;
     dst.className = "dst failed";
     dst.textContent = t("peerTranslateFailed");
-    peerPending.delete(msg.id);
   }
 }
 
@@ -978,11 +988,29 @@ async function drain() {
 const interimEl = document.createElement("div");
 interimEl.id = "interim";
 
+// interim（暫定認識結果）が0.8秒変化しなかったら、確定を待たずに
+// 先出しで翻訳を始める。字幕の遅延を減らすための先読み。
+// 正式なfinalが来たときの答え合わせは handleFinal 側で行う。
+const INTERIM_STABLE_MS = 800;
+let interimStableTimer = null;
+let lastInterimText = "";
+
 function showInterim(text) {
-  if (!text) { interimEl.remove(); return; }
+  if (!text) {
+    interimEl.remove();
+    clearTimeout(interimStableTimer);
+    lastInterimText = "";
+    return;
+  }
   interimEl.textContent = text;
   el.log.appendChild(interimEl);
   el.log.scrollTop = el.log.scrollHeight;
+
+  if (text !== lastInterimText) {
+    lastInterimText = text;
+    clearTimeout(interimStableTimer);
+    interimStableTimer = setTimeout(() => handleStableInterim(text), INTERIM_STABLE_MS);
+  }
 }
 
 function addSystemMessage(text) {
@@ -1034,11 +1062,12 @@ function addTurn(srcText, conf, isPeer = false) {
 
 let stt = null;
 
-// 短い確定（「あー」「うん」など）はすぐ翻訳せず、1.5秒待って
+// 短い確定（「あー」「うん」など）はすぐ翻訳せず、0.5秒待って
 // その間に次の確定が来たら結合する。待っているあいだも
 // 原文（src）はその場で伸びていくのが見える。
+// （Azureは回数制限が緩いので、以前の1.5秒より結合の必要性は下がっている）
 const BATCH_MIN_LENGTH = 8;
-const BATCH_WAIT_MS = 1500;
+const BATCH_WAIT_MS = 500;
 let pendingBatch = null; // { text, srcEl, dst, conf, direction, timer }
 
 function startBatch(text, conf, direction) {
@@ -1065,9 +1094,9 @@ function flushBatch() {
   translateAndSend(text, direction, dst);
 }
 
-function translateAndSend(text, direction, dst) {
-  const id = crypto.randomUUID();
-
+// idを指定しなければ新しい発言として、指定すればそのidの吹き出しを
+// 訂正（原文を上書きして翻訳し直す）扱いで送信する。
+function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
   dst.className = "dst pending";
   dst.textContent = t("translating");
 
@@ -1086,6 +1115,8 @@ function translateAndSend(text, direction, dst) {
     }
     el.log.scrollTop = el.log.scrollHeight;
   });
+
+  return id;
 }
 
 // 4分サイクルのオーバーラップ中、新旧2つの認識インスタンスが同じ発話を
@@ -1103,7 +1134,40 @@ function isDuplicateFinal(text) {
   return isDup;
 }
 
+// interimが0.8秒安定したときに先出しで翻訳を始めた吹き出し。
+// 正式なfinalが来るまでの間だけ保持する（同時に1件まで）。
+let provisionalTurn = null; // { text, dst, conf, direction, id }
+
+function handleStableInterim(text) {
+  if (pendingBatch || provisionalTurn) return;
+  if (text.length < BATCH_MIN_LENGTH) return;
+
+  const direction = el.direction.value;
+  const conf = LANGS[direction];
+  const dst = addTurn(text, conf, false);
+  const id = translateAndSend(text, direction, dst);
+  provisionalTurn = { text, dst, conf, direction, id };
+}
+
+function retranslateTurn(pending, newText) {
+  const srcEl = pending.dst.previousElementSibling;
+  if (srcEl) srcEl.textContent = newText;
+  translateAndSend(newText, pending.direction, pending.dst, pending.id);
+}
+
 function handleFinal(text) {
+  if (provisionalTurn) {
+    const pending = provisionalTurn;
+    provisionalTurn = null;
+    recentFinals.push({ text, time: Date.now() });
+
+    // 先出し翻訳の原文と実際のfinalが違っていたときだけ翻訳し直す。
+    if (text !== pending.text) {
+      retranslateTurn(pending, text);
+    }
+    return;
+  }
+
   if (isDuplicateFinal(text)) return;
 
   const direction = el.direction.value;
