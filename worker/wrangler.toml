@@ -2,5 +2,10 @@ name = "live-translate-translator"
 main = "index.js"
 compatibility_date = "2026-09-10"
 
+# Workers AI（翻訳の主経路）。追加の課金設定やキーは不要、bindingだけでよい。
+[ai]
+binding = "AI"
+
 # AZURE_TRANSLATOR_KEY と AZURE_TRANSLATOR_REGION はコードに書かず、
-# `wrangler secret put` で登録する（README参照）。
+# `wrangler secret put` で登録する（README参照）。Workers AIが失敗したときの
+# フォールバック用として、削除せず残しておく。
