@@ -1030,10 +1030,10 @@ async function drain() {
 const interimEl = document.createElement("div");
 interimEl.id = "interim";
 
-// interim（暫定認識結果）が0.8秒変化しなかったら、確定を待たずに
+// interim（暫定認識結果）が1.2秒変化しなかったら、確定を待たずに
 // 先出しで翻訳を始める。字幕の遅延を減らすための先読み。
 // 正式なfinalが来たときの答え合わせは handleFinal 側で行う。
-const INTERIM_STABLE_MS = 800;
+const INTERIM_STABLE_MS = 1200;
 let interimStableTimer = null;
 let lastInterimText = "";
 
