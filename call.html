@@ -799,7 +799,14 @@ function ensureRoomLink() {
 }
 
 async function createRoom() {
-  const link = ensureRoomLink();
+  const roomLink = ensureRoomLink();
+
+  // 招待文コピーと同じく、相手の言語（自分の逆）をlangで付けておく。
+  // 送り間違い（相手に自分と同じUI言語のリンクを送ってしまう）を防ぐため。
+  const inviteLang = currentLang === "ko" ? "ja" : "ko";
+  const link = `${roomLink}&lang=${inviteLang}`;
+  el.shareLinkInput.value = link;
+
   try {
     await navigator.clipboard.writeText(link);
     setStatus("linkCopied");
