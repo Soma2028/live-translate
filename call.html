@@ -1088,7 +1088,24 @@ function translateAndSend(text, direction, dst) {
   });
 }
 
+// 4分サイクルのオーバーラップ中、新旧2つの認識インスタンスが同じ発話を
+// それぞれ確定させることがあるため、直前3秒以内の同一テキストは無視する。
+const DEDUPE_WINDOW_MS = 3000;
+const recentFinals = []; // [{ text, time }]
+
+function isDuplicateFinal(text) {
+  const now = Date.now();
+  while (recentFinals.length && now - recentFinals[0].time > DEDUPE_WINDOW_MS) {
+    recentFinals.shift();
+  }
+  const isDup = recentFinals.some(f => f.text === text);
+  recentFinals.push({ text, time: now });
+  return isDup;
+}
+
 function handleFinal(text) {
+  if (isDuplicateFinal(text)) return;
+
   const direction = el.direction.value;
   const conf = LANGS[direction];
 
