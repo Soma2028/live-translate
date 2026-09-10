@@ -49,6 +49,14 @@
   }
   input[type="text"] { min-width: 140px; }
   input[type="password"] { flex: 1; min-width: 160px; }
+  .save-key-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
   button {
     cursor: pointer;
     border-color: var(--ink);
@@ -132,6 +140,16 @@
   .dst.pending { color: var(--muted); font-weight: 400; font-size: 16px; }
   .dst.failed { color: var(--warn); font-size: 15px; font-weight: 400; }
 
+  .system-msg {
+    align-self: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 4px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
   #interim {
     background: var(--surface);
     border-left: 3px dashed var(--line);
@@ -160,6 +178,10 @@
     <option id="dirOptKoJa" value="ko-ja">韓国語 → 日本語</option>
   </select>
   <input type="password" id="apikey" placeholder="Gemini APIキー" autocomplete="off">
+  <label class="save-key-label">
+    <input type="checkbox" id="saveKey">
+    <span id="saveKeyLabel">このブラウザに保存する</span>
+  </label>
   <button id="toggle">開始</button>
 
   <select id="uiLang">
@@ -180,7 +202,7 @@
   <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
 </main>
 
-<p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。</p>
+<p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーは「このブラウザに保存する」を選ばない限りこのページを閉じると消えます。</p>
 
 <audio id="remoteAudio" autoplay></audio>
 
@@ -203,6 +225,7 @@ const I18N = {
   ja: {
     roomPlaceholder: "合言葉（ルームID）",
     apiKeyPlaceholder: "Gemini APIキー",
+    saveKeyLabel: "このブラウザに保存する",
     createRoomBtn: "部屋を作る",
     inviteBtn: "招待文をコピー",
     connectBtn: "つなぐ",
@@ -239,13 +262,16 @@ const I18N = {
     noMic: "マイクが見つかりません。接続を確認してください。",
     cannotStart: "開始できません。一度停止してから押し直してください。",
     logEmpty: "「つなぐ」で通話、「開始」で自分の字幕が出ます。",
-    hint: "自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。",
+    hint: "自分のマイクだけを認識します。相手の声は認識しません。APIキーは「このブラウザに保存する」を選ばない限りこのページを閉じると消えます。",
     translating: "翻訳中…",
     noKeyLocal: "APIキーを入れると翻訳されます",
     translateFailed: "翻訳できませんでした（{detail}）",
     emptyResponse: "空の応答",
     peerNoKey: "相手が翻訳キーを設定していません",
     peerTranslateFailed: "相手側で翻訳に失敗しました",
+    peerJoined: "相手が参加しました",
+    peerLeft: "相手が退出しました",
+    batchWaiting: "…",
     state_new: "未接続",
     state_connecting: "接続中",
     state_checking: "確認中",
@@ -258,6 +284,7 @@ const I18N = {
   ko: {
     roomPlaceholder: "비밀번호(방 ID)",
     apiKeyPlaceholder: "Gemini API 키",
+    saveKeyLabel: "이 브라우저에 저장하기",
     createRoomBtn: "방 만들기",
     inviteBtn: "초대 문구 복사",
     connectBtn: "연결",
@@ -294,13 +321,16 @@ const I18N = {
     noMic: "마이크를 찾을 수 없습니다. 연결을 확인해주세요.",
     cannotStart: "시작할 수 없습니다. 한 번 정지한 후 다시 눌러주세요.",
     logEmpty: "[연결]로 통화, [시작]으로 자막이 나옵니다.",
-    hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다. API 키는 이 페이지를 닫으면 사라집니다.",
+    hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다. API 키는 \"이 브라우저에 저장하기\"를 선택하지 않으면 이 페이지를 닫으면 사라집니다.",
     translating: "번역 중…",
     noKeyLocal: "API 키를 입력하면 번역됩니다",
     translateFailed: "번역하지 못했습니다 ({detail})",
     emptyResponse: "빈 응답",
     peerNoKey: "상대방이 번역 키를 설정하지 않았습니다",
     peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
+    peerJoined: "상대방이 참여했습니다",
+    peerLeft: "상대방이 나갔습니다",
+    batchWaiting: "…",
     state_new: "미접속",
     state_connecting: "연결 중",
     state_checking: "확인 중",
@@ -337,6 +367,8 @@ const el = {
   dirOptJaKo: document.getElementById("dirOptJaKo"),
   dirOptKoJa: document.getElementById("dirOptKoJa"),
   apikey: document.getElementById("apikey"),
+  saveKey: document.getElementById("saveKey"),
+  saveKeyLabel: document.getElementById("saveKeyLabel"),
   toggle: document.getElementById("toggle"),
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
@@ -421,6 +453,7 @@ let roomDisconnect = null;
 let roleKey = null; // null / "roleOffer" / "roleAnswer"
 let connState = "-";
 let iceState = "-";
+let peerJoined = false; // 「相手が参加/退出しました」の二重表示を防ぐためのフラグ
 
 function updateCallInfo() {
   el.callInfo.textContent = t("callInfoTemplate", {
@@ -445,8 +478,21 @@ function resetUI() {
   roleKey = null;
   connState = "-";
   iceState = "-";
+  peerJoined = false;
   updateCallInfo();
   el.remoteAudio.srcObject = null;
+}
+
+function markPeerJoined() {
+  if (peerJoined) return;
+  peerJoined = true;
+  addSystemMessage(t("peerJoined"));
+}
+
+function markPeerLeft() {
+  if (!peerJoined) return;
+  peerJoined = false;
+  addSystemMessage(t("peerLeft"));
 }
 
 /* ---------- DataChannel: 字幕の送受信 ---------- */
@@ -456,6 +502,12 @@ function resetUI() {
 const peerPending = new Map(); // 相手の発言id -> 表示中のdst要素
 
 function wireDataChannel() {
+  dataChannel.onopen = () => {
+    markPeerJoined();
+  };
+  dataChannel.onclose = () => {
+    markPeerLeft();
+  };
   dataChannel.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
@@ -551,6 +603,10 @@ async function connect() {
       connState = pc.connectionState;
       updateCallInfo();
       setStatus("connStateMsg", { state: stateLabel(pc.connectionState) }, stateClass(pc.connectionState));
+
+      if (connState === "disconnected" || connState === "failed" || connState === "closed") {
+        markPeerLeft();
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -653,12 +709,19 @@ async function hangup() {
   }
 
   if (dataChannel) {
+    // 自分から切るときは「相手が退出しました」を出したくないので、
+    // close()自体が発火させるイベントを先に外しておく。
+    dataChannel.onopen = null;
+    dataChannel.onclose = null;
+    dataChannel.onmessage = null;
     dataChannel.close();
     dataChannel = null;
   }
   peerPending.clear();
 
   if (pc) {
+    pc.onconnectionstatechange = null;
+    pc.oniceconnectionstatechange = null;
     pc.close();
     pc = null;
   }
@@ -737,6 +800,41 @@ const sharedRoomId = new URLSearchParams(location.search).get("room");
 if (sharedRoomId) {
   el.roomInput.value = sharedRoomId;
 }
+
+/* ---------- Geminiキーの保存 ---------- */
+/* 「このブラウザに保存する」がオンのときだけlocalStorageに入れる。
+   2人だけの私用アプリという前提での、明示的なオプトインの保存。   */
+
+const API_KEY_STORAGE = "liveTranslateGeminiApiKey";
+
+function loadSavedApiKey() {
+  try {
+    const saved = localStorage.getItem(API_KEY_STORAGE);
+    if (saved) {
+      el.apikey.value = saved;
+      el.saveKey.checked = true;
+    }
+  } catch {}
+}
+
+function persistApiKeyIfNeeded() {
+  if (!el.saveKey.checked) return;
+  try {
+    localStorage.setItem(API_KEY_STORAGE, el.apikey.value);
+  } catch {}
+}
+
+el.apikey.addEventListener("input", persistApiKeyIfNeeded);
+
+el.saveKey.addEventListener("change", () => {
+  if (el.saveKey.checked) {
+    persistApiKeyIfNeeded();
+  } else {
+    try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
+  }
+});
+
+loadSavedApiKey();
 
 /* ---------- STT: 差し替え可能なインターフェース ---------- */
 /* index.html と同じロジック。後で差し替えるときは start/stop と
@@ -908,6 +1006,17 @@ function showInterim(text) {
   el.log.scrollTop = el.log.scrollHeight;
 }
 
+function addSystemMessage(text) {
+  el.log.querySelector(".empty")?.remove();
+
+  const msg = document.createElement("div");
+  msg.className = "system-msg";
+  msg.textContent = text;
+
+  el.log.insertBefore(msg, interimEl.parentNode === el.log ? interimEl : null);
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
 function addTurn(srcText, conf, isPeer = false) {
   el.log.querySelector(".empty")?.remove();
 
@@ -938,11 +1047,42 @@ function addTurn(srcText, conf, isPeer = false) {
 
 let stt = null;
 
-function handleFinal(text) {
-  const conf = LANGS[el.direction.value];
-  const key = el.apikey.value.trim();
+// 短い確定（「あー」「うん」など）はすぐ翻訳せず、1.5秒待って
+// その間に次の確定が来たら結合する。待っているあいだも
+// 原文（src）はその場で伸びていくのが見える。
+const BATCH_MIN_LENGTH = 8;
+const BATCH_WAIT_MS = 1500;
+let pendingBatch = null; // { text, srcEl, dst, conf, timer }
+
+function startBatch(text, conf) {
   const dst = addTurn(text, conf, false);
+  dst.className = "dst pending";
+  dst.textContent = t("batchWaiting");
+  const srcEl = dst.previousElementSibling;
+
+  pendingBatch = {
+    text,
+    srcEl,
+    dst,
+    conf,
+    timer: setTimeout(flushBatch, BATCH_WAIT_MS)
+  };
+}
+
+function flushBatch() {
+  if (!pendingBatch) return;
+  const { text, conf, dst } = pendingBatch;
+  clearTimeout(pendingBatch.timer);
+  pendingBatch = null;
+  translateAndSend(text, conf, dst);
+}
+
+function translateAndSend(text, conf, dst) {
+  const key = el.apikey.value.trim();
   const id = crypto.randomUUID();
+
+  dst.className = "dst pending";
+  dst.textContent = t("translating");
 
   sendToPeer({ kind: "subtitle-final", id, text, direction: el.direction.value });
 
@@ -968,6 +1108,27 @@ function handleFinal(text) {
     }
     el.log.scrollTop = el.log.scrollHeight;
   });
+}
+
+function handleFinal(text) {
+  const conf = LANGS[el.direction.value];
+
+  if (pendingBatch) {
+    pendingBatch.text += text;
+    pendingBatch.srcEl.textContent = pendingBatch.text;
+    clearTimeout(pendingBatch.timer);
+    pendingBatch.timer = setTimeout(flushBatch, BATCH_WAIT_MS);
+    el.log.scrollTop = el.log.scrollHeight;
+    return;
+  }
+
+  if (text.length < BATCH_MIN_LENGTH) {
+    startBatch(text, conf);
+    return;
+  }
+
+  const dst = addTurn(text, conf, false);
+  translateAndSend(text, conf, dst);
 }
 
 el.toggle.addEventListener("click", () => {
@@ -1007,6 +1168,7 @@ function applyI18n() {
 
   el.roomInput.placeholder = t("roomPlaceholder");
   el.apikey.placeholder = t("apiKeyPlaceholder");
+  el.saveKeyLabel.textContent = t("saveKeyLabel");
   el.createRoomBtn.textContent = t("createRoomBtn");
   el.inviteBtn.textContent = t("inviteBtn");
   el.connectBtn.textContent = t("connectBtn");
