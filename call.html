@@ -110,6 +110,7 @@
   audio#remoteAudio { display: none; }
 
   .turn {
+    position: relative;
     background: var(--surface);
     border-radius: 8px;
     padding: 10px 14px;
@@ -118,6 +119,23 @@
     gap: 10px;
     align-items: flex-start;
   }
+  .delete-btn {
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    opacity: 0;
+    transition: opacity .15s;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--muted);
+  }
+  .delete-btn:hover { color: var(--warn); }
+  .turn.own:hover .delete-btn,
+  .delete-btn:focus-visible { opacity: 1; }
   /* 自分の発言は右、相手の発言は左。アバターは常にDOM上は先頭に置き、
      flex-directionの向きだけで見た目の左右を切り替える。            */
   .turn.own {
@@ -299,6 +317,7 @@ const I18N = {
     translateFailed: "翻訳できませんでした（{detail}）",
     emptyResponse: "空の応答",
     peerTranslateFailed: "相手側で翻訳に失敗しました",
+    deleteTurn: "この発言を削除",
     peerJoined: "相手が参加しました",
     peerLeft: "相手が退出しました",
     batchWaiting: "…",
@@ -354,6 +373,7 @@ const I18N = {
     translateFailed: "번역하지 못했습니다 ({detail})",
     emptyResponse: "빈 응답",
     peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
+    deleteTurn: "이 발언 삭제",
     peerJoined: "상대방이 참여했습니다",
     peerLeft: "상대방이 나갔습니다",
     batchWaiting: "…",
@@ -596,6 +616,11 @@ function handlePeerMessage(msg) {
     if (!entry) return;
     entry.dst.className = "dst failed";
     entry.dst.textContent = t("peerTranslateFailed");
+  } else if (msg.kind === "subtitle-delete") {
+    const entry = peerPending.get(msg.id);
+    if (!entry) return;
+    entry.dst.closest(".turn")?.remove();
+    peerPending.delete(msg.id);
   }
 }
 
@@ -1154,6 +1179,18 @@ function addTurn(srcText, conf, isPeer = false) {
 
   body.append(src, dst);
   turn.append(avatar, body);
+
+  if (!isPeer) {
+    // 自分の発言だけ削除ボタンを付ける（相手の発言は消せない）。
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "delete-btn";
+    deleteBtn.textContent = "×";
+    deleteBtn.setAttribute("aria-label", t("deleteTurn"));
+    deleteBtn.addEventListener("click", () => deleteOwnTurn(turn));
+    turn.appendChild(deleteBtn);
+  }
+
   el.log.insertBefore(turn, interimEl.parentNode === el.log ? interimEl : null);
 
   // 長時間の通話でDOMが膨らむのを防ぐ
@@ -1203,6 +1240,9 @@ function flushBatch() {
 // idを指定しなければ新しい発言として、指定すればそのidの吹き出しを
 // 訂正（原文を上書きして翻訳し直す）扱いで送信する。
 function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
+  const turn = dst.closest(".turn");
+  if (turn) turn.dataset.id = id;
+
   dst.className = "dst pending";
   dst.textContent = t("translating");
 
@@ -1223,6 +1263,28 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
   });
 
   return id;
+}
+
+// 自分の吹き出しを即座に消し、相手にも削除を通知する（確認ダイアログなし）。
+function deleteOwnTurn(turn) {
+  const id = turn.dataset.id;
+  const dst = turn.querySelector(".dst");
+
+  // 結合待ち・先出し翻訳の途中で削除された場合、あとから復活しないように
+  // 対応する保留状態も一緒に消しておく。
+  if (pendingBatch && pendingBatch.dst === dst) {
+    clearTimeout(pendingBatch.timer);
+    pendingBatch = null;
+  }
+  if (provisionalTurn && provisionalTurn.dst === dst) {
+    provisionalTurn = null;
+  }
+
+  turn.remove();
+
+  if (id) {
+    sendToPeer({ kind: "subtitle-delete", id });
+  }
 }
 
 // 4分サイクルのオーバーラップ中、新旧2つの認識インスタンスが同じ発話を
