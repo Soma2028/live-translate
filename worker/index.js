@@ -1,6 +1,7 @@
 // call.html からの翻訳リクエストを中継するWorker。
-// Workers AI（LLM）で友人同士の口調に自然に訳し、失敗したときだけ
-// Azure Translatorにフォールバックする。
+// 主経路と、失敗時に自動で使われるフォールバックはこのフラグで決まる。
+// "azure" か "workers-ai" を指定する。逆側のコードは消さずに残してある。
+const PRIMARY_ENGINE = "azure";
 
 const ALLOWED_ORIGINS = new Set([
   "https://soma2028.github.io",
@@ -68,7 +69,7 @@ function buildSystemPrompt(from, to) {
   );
 }
 
-// Workers AI（LLM）で翻訳する。失敗したら例外を投げ、呼び出し側でAzureにフォールバックする。
+// Workers AI（LLM）で翻訳する。失敗したら例外を投げ、呼び出し側でフォールバックする。
 async function translateWithWorkersAI(env, text, from, to) {
   const result = await env.AI.run(WORKERS_AI_MODEL, {
     messages: [
@@ -84,7 +85,7 @@ async function translateWithWorkersAI(env, text, from, to) {
   return translated;
 }
 
-// Workers AIが使えないときのフォールバック。口調の指定はできないが、訳文は返せる。
+// 専用の翻訳API。口調の指定はできないが、速くて安定している。
 async function translateWithAzure(env, text, from, to) {
   const azureUrl =
     `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0` +
@@ -148,15 +149,24 @@ export default {
       return json({ error: "fromとtoを指定してください" }, 400, cors);
     }
 
+    const engines = {
+      azure: translateWithAzure,
+      "workers-ai": translateWithWorkersAI
+    };
+    const primary = engines[PRIMARY_ENGINE] || translateWithAzure;
+    const primaryName = engines[PRIMARY_ENGINE] ? PRIMARY_ENGINE : "azure";
+    const fallback = primaryName === "azure" ? translateWithWorkersAI : translateWithAzure;
+    const fallbackName = primaryName === "azure" ? "workers-ai" : "azure";
+
     try {
-      const translated = await translateWithWorkersAI(env, text, from, to);
+      const translated = await primary(env, text, from, to);
       return json({ text: translated }, 200, cors);
     } catch (err) {
-      console.warn("Workers AI translation failed, falling back to Azure:", err.message);
+      console.warn(`${primaryName} translation failed, falling back to ${fallbackName}:`, err.message);
     }
 
     try {
-      const translated = await translateWithAzure(env, text, from, to);
+      const translated = await fallback(env, text, from, to);
       return json({ text: translated }, 200, cors);
     } catch {
       return json({ error: "翻訳サービスへの接続に失敗しました" }, 502, cors);
