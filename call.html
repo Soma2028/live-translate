@@ -1287,6 +1287,19 @@ function deleteOwnTurn(turn) {
   }
 }
 
+// Escキーで直前の自分の字幕を削除する。話しながらマウスを狙わずに消せるように。
+// 入力欄にフォーカスがあるときはEscの本来の動作（フォーカス解除など）を優先する。
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+
+  const active = document.activeElement;
+  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+
+  const ownTurns = el.log.querySelectorAll(".turn.own");
+  const lastOwn = ownTurns[ownTurns.length - 1];
+  if (lastOwn) deleteOwnTurn(lastOwn);
+});
+
 // 4分サイクルのオーバーラップ中、新旧2つの認識インスタンスが同じ発話を
 // それぞれ確定させることがあるため、直前3秒以内の同一テキストは無視する。
 const DEDUPE_WINDOW_MS = 3000;
