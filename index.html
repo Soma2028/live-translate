@@ -124,7 +124,7 @@
 <p class="hint">キーはこのページを閉じると消えます。保存もどこにも送信もされません。</p>
 
 <script>
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.8-flash";
 const LANGS = {
   "ja-ko": { src: "ja-JP", srcName: "日本語", dstName: "韓国語", color: "var(--ja)" },
   "ko-ja": { src: "ko-KR", srcName: "韓国語", dstName: "日本語", color: "var(--ko)" }
@@ -246,23 +246,35 @@ async function translate(text, conf, key) {
     (context ? `\n直前のやりとり:\n${context}\n` : "") +
     `\n発話: ${text}`;
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
-    {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
+  });
+
+  // 429（レート制限）・503（一時的な過負荷）だけ、1.5秒待って1回だけ再試行する。
+  // それ以外のエラーは再試行せず、その場で失敗にする。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 256 }
-      })
-    }
-  );
+      body
+    });
 
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
-  const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!out) throw new Error("空の応答");
-  return out.trim();
+    if (res.ok) {
+      const data = await res.json();
+      const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!out) throw new Error("空の応答");
+      return out.trim();
+    }
+
+    if ((res.status === 429 || res.status === 503) && attempt === 0) {
+      await new Promise(r => setTimeout(r, 1500));
+      continue;
+    }
+
+    throw new Error("HTTP " + res.status);
+  }
 }
 
 function enqueue(job) {

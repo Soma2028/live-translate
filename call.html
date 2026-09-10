@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ライブ翻訳 通話+字幕</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&family=Noto+Sans+KR:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e9edef;
+    --surface: #ffffff;
+    --ink: #16202a;
+    --muted: #5e6b75;
+    --line: #d3dade;
+    --ja: #2f5d8c;
+    --ko: #2f6b4f;
+    --warn: #9c3b25;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans JP", "Noto Sans KR", sans-serif;
+    line-height: 1.7;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  select, input, button {
+    font: inherit;
+    font-size: 14px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  input[type="text"] { min-width: 140px; }
+  input[type="password"] { flex: 1; min-width: 160px; }
+  button {
+    cursor: pointer;
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--surface);
+    font-weight: 500;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  button.hangup { background: var(--warn); border-color: var(--warn); }
+  button.stop { background: var(--warn); border-color: var(--warn); }
+  :focus-visible { outline: 2px solid var(--ja); outline-offset: 2px; }
+
+  #status {
+    font-size: 13px;
+    color: var(--muted);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  #status.live { color: var(--ko); }
+  #status.error { color: var(--warn); }
+
+  #callInfo {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  #sttStatus {
+    font-size: 13px;
+    color: var(--muted);
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  #sttStatus.live { color: var(--ko); }
+  #sttStatus.error { color: var(--warn); }
+
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .empty { color: var(--muted); font-size: 15px; margin: auto; text-align: center; }
+
+  audio#remoteAudio { display: none; }
+
+  .turn {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 10px 14px;
+    max-width: 68ch;
+  }
+  .turn.own {
+    border-left: 3px solid var(--turn-color);
+    border-radius: 0 8px 8px 0;
+    align-self: flex-start;
+  }
+  .turn.peer {
+    border-right: 3px solid var(--turn-color);
+    border-radius: 8px 0 0 8px;
+    align-self: flex-end;
+    text-align: right;
+  }
+  .src { font-size: 14px; color: var(--muted); }
+  .dst { font-size: 22px; font-weight: 500; margin-top: 4px; }
+  .dst.pending { color: var(--muted); font-weight: 400; font-size: 16px; }
+  .dst.failed { color: var(--warn); font-size: 15px; font-weight: 400; }
+
+  #interim {
+    background: var(--surface);
+    border-left: 3px dashed var(--line);
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    color: var(--muted);
+    font-size: 16px;
+    max-width: 68ch;
+    align-self: flex-start;
+  }
+  #interim:empty { display: none; }
+  .hint { font-size: 12px; color: var(--muted); padding: 0 16px 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <input type="text" id="roomInput" placeholder="合言葉（ルームID）" autocomplete="off">
+  <button id="connectBtn">つなぐ</button>
+  <button id="hangupBtn" class="hangup" disabled>切る</button>
+
+  <select id="direction">
+    <option value="ja-ko">日本語 → 韓国語</option>
+    <option value="ko-ja">韓国語 → 日本語</option>
+  </select>
+  <input type="password" id="apikey" placeholder="Gemini APIキー" autocomplete="off">
+  <button id="toggle">開始</button>
+</header>
+
+<div id="status">合言葉を入力して「つなぐ」を押してください。</div>
+<div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
+<div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
+
+<main id="log">
+  <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
+</main>
+
+<p class="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。</p>
+
+<audio id="remoteAudio" autoplay></audio>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const MODEL = "gemini-3.8-flash";
+const LANGS = {
+  "ja-ko": { src: "ja-JP", srcName: "日本語", dstName: "韓国語", color: "var(--ja)" },
+  "ko-ja": { src: "ko-KR", srcName: "韓国語", dstName: "日本語", color: "var(--ko)" }
+};
+
+const el = {
+  roomInput: document.getElementById("roomInput"),
+  connectBtn: document.getElementById("connectBtn"),
+  hangupBtn: document.getElementById("hangupBtn"),
+  direction: document.getElementById("direction"),
+  apikey: document.getElementById("apikey"),
+  toggle: document.getElementById("toggle"),
+  status: document.getElementById("status"),
+  callInfo: document.getElementById("callInfo"),
+  sttStatus: document.getElementById("sttStatus"),
+  log: document.getElementById("log"),
+  remoteAudio: document.getElementById("remoteAudio")
+};
+
+function setStatus(text, cls = "") {
+  el.status.textContent = text;
+  el.status.className = cls;
+}
+
+function setError(text) {
+  setStatus(text, "error");
+}
+
+function setSttStatus(text, cls = "") {
+  el.sttStatus.textContent = text;
+  el.sttStatus.className = cls;
+}
+
+/* ---------- Firebase 初期化 ---------- */
+/* firebase-config.js は .gitignore 対象。firebase-config.example.js を
+   コピーして自分のFirebaseプロジェクトの値を入れること。            */
+
+let firebaseConfig;
+try {
+  ({ firebaseConfig } = await import("./firebase-config.js"));
+} catch (err) {
+  setError("firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。");
+  throw err;
+}
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// TURNサーバーの設定。値は後で入れる（NAT越え等でSTUNだけでは繋がらない場合に必要）。
+const TURN_SERVERS = [
+  // { urls: "turn:example.com:3478", username: "", credential: "" }
+];
+
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  ...TURN_SERVERS
+];
+
+/* ---------- 通話の状態 ---------- */
+
+let pc = null;
+let localStream = null;
+let roomId = null;
+let dataChannel = null;
+
+// onValue/onChildAdded の購読を切断時に解除するための参照
+let answerRef = null;
+let offerCandidatesRef = null;
+let answerCandidatesRef = null;
+
+let role = "-";
+let connState = "-";
+let iceState = "-";
+
+function updateCallInfo() {
+  el.callInfo.textContent = `役割: ${role} ・ 接続: ${connState} ・ ICE: ${iceState}`;
+}
+
+function stateClass(state) {
+  if (state === "connected") return "live";
+  if (state === "failed" || state === "disconnected" || state === "closed") return "error";
+  return "";
+}
+
+function resetUI() {
+  el.connectBtn.disabled = false;
+  el.roomInput.disabled = false;
+  el.hangupBtn.disabled = true;
+  role = "-";
+  connState = "-";
+  iceState = "-";
+  updateCallInfo();
+  el.remoteAudio.srcObject = null;
+}
+
+/* ---------- DataChannel: 字幕の送受信 ---------- */
+/* 音声レーン（WebRTC audio）とは完全に独立させる。
+   自分のSTT確定テキストと、その翻訳結果だけを相手に送る。      */
+
+const peerPending = new Map(); // 相手の発言id -> 表示中のdst要素
+
+function wireDataChannel() {
+  dataChannel.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    handlePeerMessage(msg);
+  };
+}
+
+function sendToPeer(obj) {
+  if (dataChannel && dataChannel.readyState === "open") {
+    dataChannel.send(JSON.stringify(obj));
+  }
+}
+
+function handlePeerMessage(msg) {
+  if (msg.kind === "subtitle-final") {
+    const conf = LANGS[msg.direction] || LANGS["ja-ko"];
+    const dst = addTurn(msg.text, conf, true);
+    peerPending.set(msg.id, dst);
+  } else if (msg.kind === "subtitle-translated") {
+    const dst = peerPending.get(msg.id);
+    if (!dst) return;
+    dst.className = "dst";
+    dst.textContent = msg.text;
+    peerPending.delete(msg.id);
+    el.log.scrollTop = el.log.scrollHeight;
+  } else if (msg.kind === "subtitle-failed") {
+    const dst = peerPending.get(msg.id);
+    if (!dst) return;
+    dst.className = "dst failed";
+    dst.textContent = "相手側で翻訳できませんでした（" + msg.message + "）";
+    peerPending.delete(msg.id);
+  }
+}
+
+/* ---------- 通話の接続 ---------- */
+
+async function connect() {
+  const inputId = el.roomInput.value.trim();
+  if (!inputId) {
+    setError("合言葉を入力してください。");
+    return;
+  }
+  roomId = inputId;
+
+  el.connectBtn.disabled = true;
+  el.roomInput.disabled = true;
+  setStatus("マイクを準備中…");
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+  } catch (err) {
+    setError("マイクが許可されていません。ブラウザの設定で許可してください。");
+    resetUI();
+    return;
+  }
+
+  const roomRef = ref(db, `rooms/${roomId}`);
+
+  try {
+    const snap = await get(roomRef);
+    const roomData = snap.val();
+
+    if (roomData && roomData.offer && roomData.answer) {
+      setError("この合言葉にはすでに2人います。別の合言葉を使ってください。");
+      localStream.getTracks().forEach(t => t.stop());
+      localStream = null;
+      resetUI();
+      return;
+    }
+
+    el.hangupBtn.disabled = false;
+    setStatus("シグナリング中…");
+
+    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    pc.ontrack = (e) => {
+      el.remoteAudio.srcObject = e.streams[0];
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (!pc) return;
+      connState = pc.connectionState;
+      updateCallInfo();
+      setStatus(`接続状態: ${pc.connectionState}`, stateClass(pc.connectionState));
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (!pc) return;
+      iceState = pc.iceConnectionState;
+      updateCallInfo();
+      if (pc.iceConnectionState === "failed") {
+        setError("ICE接続に失敗しました。相手と別ネットワークの場合、TURNサーバーの設定が必要な可能性があります。");
+      }
+    };
+
+    if (!roomData || !roomData.offer) {
+      /* 先に入った側: offerを作る */
+      role = "offer（先に入った側）";
+      updateCallInfo();
+
+      dataChannel = pc.createDataChannel("subtitles");
+      wireDataChannel();
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          push(ref(db, `rooms/${roomId}/offerCandidates`), e.candidate.toJSON());
+        }
+      };
+
+      const offerDesc = await pc.createOffer();
+      await pc.setLocalDescription(offerDesc);
+      await set(roomRef, {
+        offer: { type: offerDesc.type, sdp: offerDesc.sdp }
+      });
+
+      answerRef = ref(db, `rooms/${roomId}/answer`);
+      onValue(answerRef, async (s) => {
+        const answer = s.val();
+        if (answer && pc && !pc.currentRemoteDescription) {
+          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+      });
+
+      answerCandidatesRef = ref(db, `rooms/${roomId}/answerCandidates`);
+      onChildAdded(answerCandidatesRef, (s) => {
+        if (pc) pc.addIceCandidate(new RTCIceCandidate(s.val())).catch(() => {});
+      });
+    } else {
+      /* 後から入った側: answerを返す */
+      role = "answer（後から入った側）";
+      updateCallInfo();
+
+      pc.ondatachannel = (e) => {
+        dataChannel = e.channel;
+        wireDataChannel();
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          push(ref(db, `rooms/${roomId}/answerCandidates`), e.candidate.toJSON());
+        }
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(roomData.offer));
+      const answerDesc = await pc.createAnswer();
+      await pc.setLocalDescription(answerDesc);
+      await update(roomRef, {
+        answer: { type: answerDesc.type, sdp: answerDesc.sdp }
+      });
+
+      offerCandidatesRef = ref(db, `rooms/${roomId}/offerCandidates`);
+      onChildAdded(offerCandidatesRef, (s) => {
+        if (pc) pc.addIceCandidate(new RTCIceCandidate(s.val())).catch(() => {});
+      });
+    }
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      setError("合言葉は12文字以上にしてください。");
+    } else {
+      setError("Firebaseとの通信に失敗しました（" + err.message + "）。");
+    }
+    if (pc) { pc.close(); pc = null; }
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    resetUI();
+  }
+}
+
+function isPermissionDenied(err) {
+  // Firebase SDKは "PERMISSION_DENIED" ではなく "Permission denied" のように
+  // 区切り文字も大文字小文字もまちまちで投げてくるため、単語の部分一致で判定する。
+  const text = `${err?.code || ""} ${err?.message || ""}`.toUpperCase();
+  return text.includes("PERMISSION") && text.includes("DENIED");
+}
+
+async function hangup() {
+  if (answerRef) { off(answerRef); answerRef = null; }
+  if (offerCandidatesRef) { off(offerCandidatesRef); offerCandidatesRef = null; }
+  if (answerCandidatesRef) { off(answerCandidatesRef); answerCandidatesRef = null; }
+
+  if (dataChannel) {
+    dataChannel.close();
+    dataChannel = null;
+  }
+  peerPending.clear();
+
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+  if (roomId) {
+    await remove(ref(db, `rooms/${roomId}`)).catch(() => {});
+    roomId = null;
+  }
+
+  resetUI();
+  setStatus("切断しました。");
+}
+
+el.connectBtn.addEventListener("click", connect);
+el.hangupBtn.addEventListener("click", hangup);
+
+/* ---------- STT: 差し替え可能なインターフェース ---------- */
+/* index.html と同じロジック。後で差し替えるときは start/stop と
+   同じ形のクラスを書いて new する行だけ差し替えればいい。      */
+
+class WebSpeechSTT {
+  constructor({ lang, onInterim, onFinal, onState }) {
+    this.lang = lang;
+    this.onInterim = onInterim;
+    this.onFinal = onFinal;
+    this.onState = onState;
+    this.running = false;
+    this.rec = null;
+    this.restartTimer = null;
+  }
+
+  start() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      this.onState("この端末では音声認識が使えません。Chrome か Edge で開いてください。", "error");
+      return false;
+    }
+    this.running = true;
+    this._spawn(SR);
+    return true;
+  }
+
+  _spawn(SR) {
+    const rec = new SR();
+    rec.lang = this.lang;
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onstart = () => this.onState("認識中", "live");
+
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const text = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          const t = text.trim();
+          if (t) this.onFinal(t);
+        } else {
+          interim += text;
+        }
+      }
+      this.onInterim(interim);
+    };
+
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        this.running = false;
+        this.onState("マイクが許可されていません。ブラウザの設定で許可してください。", "error");
+      } else if (e.error === "audio-capture") {
+        this.running = false;
+        this.onState("マイクが見つかりません。接続を確認してください。", "error");
+      }
+      // no-speech / network / aborted は onend の再起動にまかせる
+    };
+
+    // Web Speech API は数十秒〜数分で勝手に止まる。
+    // running のあいだは張り直し続けるのがこのループ。
+    rec.onend = () => {
+      if (!this.running) {
+        this.onState("停止中");
+        return;
+      }
+      this.onState("再接続中…");
+      clearTimeout(this.restartTimer);
+      this.restartTimer = setTimeout(() => {
+        if (this.running) this._spawn(SR);
+      }, 250);
+    };
+
+    this.rec = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      this.onState("開始できません。一度停止してから押し直してください。", "error");
+    }
+  }
+
+  stop() {
+    this.running = false;
+    clearTimeout(this.restartTimer);
+    if (this.rec) this.rec.abort();
+    this.onInterim("");
+    this.onState("停止中");
+  }
+}
+
+/* ---------- 翻訳（index.html と同じロジック） ---------- */
+
+const history = [];          // 直近の文脈（原文/訳文のペア）
+const queue = [];            // 順番を崩さないための直列キュー
+let draining = false;
+
+async function translate(text, conf, key) {
+  const context = history.slice(-4)
+    .map(h => `${h.src} → ${h.dst}`)
+    .join("\n");
+
+  const prompt =
+    `あなたは通話の同時通訳です。次の${conf.srcName}の発話を${conf.dstName}に訳してください。\n` +
+    `訳文だけを出力し、説明・引用符・原文は付けないこと。\n` +
+    `話し言葉として自然な口語にすること。\n` +
+    (context ? `\n直前のやりとり:\n${context}\n` : "") +
+    `\n発話: ${text}`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
+  });
+
+  // 429（レート制限）・503（一時的な過負荷）だけ、1.5秒待って1回だけ再試行する。
+  // それ以外のエラーは再試行せず、その場で失敗にする。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!out) throw new Error("空の応答");
+      return out.trim();
+    }
+
+    if ((res.status === 429 || res.status === 503) && attempt === 0) {
+      await new Promise(r => setTimeout(r, 1500));
+      continue;
+    }
+
+    throw new Error("HTTP " + res.status);
+  }
+}
+
+function enqueue(job) {
+  queue.push(job);
+  if (!draining) drain();
+}
+
+async function drain() {
+  draining = true;
+  while (queue.length) {
+    const job = queue.shift();
+    await job();
+  }
+  draining = false;
+}
+
+/* ---------- 表示 ---------- */
+
+const interimEl = document.createElement("div");
+interimEl.id = "interim";
+
+function showInterim(text) {
+  if (!text) { interimEl.remove(); return; }
+  interimEl.textContent = text;
+  el.log.appendChild(interimEl);
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+function addTurn(srcText, conf, isPeer = false) {
+  el.log.querySelector(".empty")?.remove();
+
+  const turn = document.createElement("div");
+  turn.className = "turn " + (isPeer ? "peer" : "own");
+  turn.style.setProperty("--turn-color", conf.color);
+
+  const src = document.createElement("div");
+  src.className = "src";
+  src.textContent = srcText;
+
+  const dst = document.createElement("div");
+  dst.className = "dst pending";
+  dst.textContent = "翻訳中…";
+
+  turn.append(src, dst);
+  el.log.insertBefore(turn, interimEl.parentNode === el.log ? interimEl : null);
+
+  // 長時間の通話でDOMが膨らむのを防ぐ
+  const turns = el.log.querySelectorAll(".turn");
+  if (turns.length > 40) turns[0].remove();
+
+  el.log.scrollTop = el.log.scrollHeight;
+  return dst;
+}
+
+/* ---------- STTの配線 ---------- */
+
+let stt = null;
+
+function handleFinal(text) {
+  const conf = LANGS[el.direction.value];
+  const key = el.apikey.value.trim();
+  const dst = addTurn(text, conf, false);
+  const id = crypto.randomUUID();
+
+  sendToPeer({ kind: "subtitle-final", id, text, direction: el.direction.value });
+
+  if (!key) {
+    dst.className = "dst failed";
+    dst.textContent = "APIキーを入れると翻訳されます";
+    sendToPeer({ kind: "subtitle-failed", id, message: "送信側でAPIキーが未設定です" });
+    return;
+  }
+
+  enqueue(async () => {
+    try {
+      const out = await translate(text, conf, key);
+      dst.className = "dst";
+      dst.textContent = out;
+      history.push({ src: text, dst: out });
+      if (history.length > 8) history.shift();
+      sendToPeer({ kind: "subtitle-translated", id, text: out });
+    } catch (err) {
+      dst.className = "dst failed";
+      dst.textContent = "翻訳できませんでした（" + err.message + "）";
+      sendToPeer({ kind: "subtitle-failed", id, message: err.message });
+    }
+    el.log.scrollTop = el.log.scrollHeight;
+  });
+}
+
+el.toggle.addEventListener("click", () => {
+  if (stt && stt.running) {
+    stt.stop();
+    stt = null;
+    el.toggle.textContent = "開始";
+    el.toggle.classList.remove("stop");
+    el.direction.disabled = false;
+    return;
+  }
+
+  const conf = LANGS[el.direction.value];
+  stt = new WebSpeechSTT({
+    lang: conf.src,
+    onInterim: showInterim,
+    onFinal: handleFinal,
+    onState: setSttStatus
+  });
+
+  if (stt.start()) {
+    el.toggle.textContent = "停止";
+    el.toggle.classList.add("stop");
+    el.direction.disabled = true;
+  } else {
+    stt = null;
+  }
+});
+</script>
+</body>
+</html>
