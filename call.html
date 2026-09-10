@@ -87,6 +87,14 @@
     background: var(--surface);
   }
 
+  #usageInfo {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
   #sttStatus {
     font-size: 13px;
     color: var(--muted);
@@ -222,6 +230,7 @@
 
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
+<div id="usageInfo">今月 0 / 2,000,000 文字</div>
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
 
 <main id="log">
@@ -318,6 +327,7 @@ const I18N = {
     emptyResponse: "空の応答",
     peerTranslateFailed: "相手側で翻訳に失敗しました",
     deleteTurn: "この発言を削除",
+    usageTemplate: "今月 {used} / {limit} 文字",
     peerJoined: "相手が参加しました",
     peerLeft: "相手が退出しました",
     batchWaiting: "…",
@@ -374,6 +384,7 @@ const I18N = {
     emptyResponse: "빈 응답",
     peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
     deleteTurn: "이 발언 삭제",
+    usageTemplate: "이번 달 {used} / {limit}자",
     peerJoined: "상대방이 참여했습니다",
     peerLeft: "상대방이 나갔습니다",
     batchWaiting: "…",
@@ -422,6 +433,7 @@ const el = {
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
+  usageInfo: document.getElementById("usageInfo"),
   sttStatus: document.getElementById("sttStatus"),
   log: document.getElementById("log"),
   hint: document.getElementById("hint"),
@@ -515,6 +527,50 @@ function updateCallInfo() {
     ice: stateLabel(iceState),
     restarts: sttRestartCount
   });
+}
+
+/* ---------- 翻訳文字数の累計（月ごとにリセット） ---------- */
+/* Azure Translatorの無料枠（月200万文字）の目安として表示するだけの
+   ローカル集計。サーバー側の実使用量とは独立している。               */
+
+const CHAR_USAGE_STORAGE = "liveTranslateCharUsage";
+const CHAR_USAGE_LIMIT = 2_000_000;
+
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+let usageMonth = currentMonthKey();
+let charUsageCount = 0;
+
+try {
+  const saved = JSON.parse(localStorage.getItem(CHAR_USAGE_STORAGE));
+  if (saved && saved.month === usageMonth && typeof saved.count === "number") {
+    charUsageCount = saved.count;
+  }
+} catch {}
+
+function updateCharUsageDisplay() {
+  el.usageInfo.textContent = t("usageTemplate", {
+    used: charUsageCount.toLocaleString("en-US"),
+    limit: CHAR_USAGE_LIMIT.toLocaleString("en-US")
+  });
+}
+
+function addCharUsage(n) {
+  const nowMonth = currentMonthKey();
+  if (nowMonth !== usageMonth) {
+    usageMonth = nowMonth;
+    charUsageCount = 0;
+  }
+  charUsageCount += n;
+
+  try {
+    localStorage.setItem(CHAR_USAGE_STORAGE, JSON.stringify({ month: usageMonth, count: charUsageCount }));
+  } catch {}
+
+  updateCharUsageDisplay();
 }
 
 function stateClass(state) {
@@ -1243,6 +1299,8 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
   const turn = dst.closest(".turn");
   if (turn) turn.dataset.id = id;
 
+  addCharUsage(text.length);
+
   dst.className = "dst pending";
   dst.textContent = t("translating");
 
@@ -1441,6 +1499,7 @@ function applyI18n() {
   renderStatus();
   renderSttStatus();
   updateCallInfo();
+  updateCharUsageDisplay();
 }
 
 el.uiLang.addEventListener("change", () => {
