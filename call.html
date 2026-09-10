@@ -61,6 +61,15 @@
   button.stop { background: var(--warn); border-color: var(--warn); }
   :focus-visible { outline: 2px solid var(--ja); outline-offset: 2px; }
 
+  #uiLang { margin-left: auto; }
+
+  #shareLinkRow {
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  #shareLinkInput { width: 100%; font-size: 13px; color: var(--muted); }
+
   #status {
     font-size: 13px;
     color: var(--muted);
@@ -141,16 +150,26 @@
 
 <header>
   <input type="text" id="roomInput" placeholder="合言葉（ルームID）" autocomplete="off">
+  <button id="createRoomBtn">部屋を作る</button>
   <button id="connectBtn">つなぐ</button>
   <button id="hangupBtn" class="hangup" disabled>切る</button>
 
   <select id="direction">
-    <option value="ja-ko">日本語 → 韓国語</option>
-    <option value="ko-ja">韓国語 → 日本語</option>
+    <option id="dirOptJaKo" value="ja-ko">日本語 → 韓国語</option>
+    <option id="dirOptKoJa" value="ko-ja">韓国語 → 日本語</option>
   </select>
   <input type="password" id="apikey" placeholder="Gemini APIキー" autocomplete="off">
   <button id="toggle">開始</button>
+
+  <select id="uiLang">
+    <option value="ja">日本語</option>
+    <option value="ko">한국어</option>
+  </select>
 </header>
+
+<div id="shareLinkRow" hidden>
+  <input type="text" id="shareLinkInput" readonly>
+</div>
 
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
@@ -160,14 +179,14 @@
   <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
 </main>
 
-<p class="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。</p>
+<p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。</p>
 
 <audio id="remoteAudio" autoplay></audio>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off
+  getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 const MODEL = "gemini-3.8-flash";
@@ -176,32 +195,177 @@ const LANGS = {
   "ko-ja": { src: "ko-KR", srcName: "韓国語", dstName: "日本語", color: "var(--ko)" }
 };
 
+/* ---------- i18n: 表示言語ごとの文言 ---------- */
+/* キーで引く形にまとめてある。増やすときはここに追記すればよい。 */
+
+const I18N = {
+  ja: {
+    roomPlaceholder: "合言葉（ルームID）",
+    apiKeyPlaceholder: "Gemini APIキー",
+    createRoomBtn: "部屋を作る",
+    connectBtn: "つなぐ",
+    hangupBtn: "切る",
+    startBtn: "開始",
+    stopBtn: "停止",
+    directionJaKo: "日本語 → 韓国語",
+    directionKoJa: "韓国語 → 日本語",
+    statusInitial: "合言葉を入力して「つなぐ」を押してください。",
+    micPreparing: "マイクを準備中…",
+    micDenied: "マイクが許可されていません。ブラウザの設定で許可してください。",
+    alreadyTwo: "この合言葉にはすでに2人います。別の合言葉を使ってください。",
+    signaling: "シグナリング中…",
+    connStateMsg: "接続状態: {state}",
+    iceFailed: "ICE接続に失敗しました。相手と別ネットワークの場合、TURNサーバーの設定が必要な可能性があります。",
+    roomIdTooShort: "合言葉は12文字以上にしてください。",
+    firebaseError: "Firebaseとの通信に失敗しました（{message}）。",
+    hangupDone: "切断しました。",
+    roomIdEmpty: "合言葉を入力してください。",
+    linkCopied: "リンクをコピーしました。相手に送ってください。",
+    linkCopyFailed: "コピーに失敗しました。下のリンクを手動でコピーしてください。",
+    configMissing: "firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。",
+    roleOffer: "offer（先に入った側）",
+    roleAnswer: "answer（後から入った側）",
+    callInfoTemplate: "役割: {role} ・ 接続: {conn} ・ ICE: {ice}",
+    sttInitial: "マイクの許可が必要です。Chrome または Edge で開いてください。",
+    sttListening: "認識中",
+    sttReconnecting: "再接続中…",
+    sttStopped: "停止中",
+    sttUnsupported: "この端末では音声認識が使えません。Chrome か Edge で開いてください。",
+    noMic: "マイクが見つかりません。接続を確認してください。",
+    cannotStart: "開始できません。一度停止してから押し直してください。",
+    logEmpty: "「つなぐ」で通話、「開始」で自分の字幕が出ます。",
+    hint: "自分のマイクだけを認識します。相手の声は認識しません。APIキーはこのページを閉じると消えます。",
+    translating: "翻訳中…",
+    noKeyLocal: "APIキーを入れると翻訳されます",
+    translateFailed: "翻訳できませんでした（{detail}）",
+    emptyResponse: "空の応答",
+    peerNoKey: "相手が翻訳キーを設定していません",
+    peerTranslateFailed: "相手側で翻訳に失敗しました",
+    state_new: "未接続",
+    state_connecting: "接続中",
+    state_checking: "確認中",
+    state_connected: "接続済み",
+    state_completed: "完了",
+    state_disconnected: "切断",
+    state_failed: "失敗",
+    state_closed: "終了"
+  },
+  ko: {
+    roomPlaceholder: "비밀번호(방 ID)",
+    apiKeyPlaceholder: "Gemini API 키",
+    createRoomBtn: "방 만들기",
+    connectBtn: "연결",
+    hangupBtn: "끊기",
+    startBtn: "시작",
+    stopBtn: "중지",
+    directionJaKo: "일본어 → 한국어",
+    directionKoJa: "한국어 → 일본어",
+    statusInitial: "비밀번호를 입력하고 [연결]을 눌러주세요.",
+    micPreparing: "마이크를 준비하는 중…",
+    micDenied: "마이크 권한이 없습니다. 브라우저 설정에서 허용해주세요.",
+    alreadyTwo: "이 비밀번호에는 이미 두 명이 있습니다. 다른 비밀번호를 사용하세요.",
+    signaling: "시그널링 중…",
+    connStateMsg: "연결 상태: {state}",
+    iceFailed: "ICE 연결에 실패했습니다. 상대방과 다른 네트워크에 있다면 TURN 서버 설정이 필요할 수 있습니다.",
+    roomIdTooShort: "비밀번호는 12자 이상으로 해주세요.",
+    firebaseError: "Firebase 통신에 실패했습니다 ({message}).",
+    hangupDone: "연결을 끊었습니다.",
+    roomIdEmpty: "비밀번호를 입력해주세요.",
+    linkCopied: "링크를 복사했습니다. 상대방에게 보내주세요.",
+    linkCopyFailed: "복사에 실패했습니다. 아래 링크를 직접 복사해주세요.",
+    configMissing: "firebase-config.js 파일을 찾을 수 없습니다. firebase-config.example.js를 복사해서 만들어주세요.",
+    roleOffer: "offer (먼저 들어온 쪽)",
+    roleAnswer: "answer (나중에 들어온 쪽)",
+    callInfoTemplate: "역할: {role} ・ 연결: {conn} ・ ICE: {ice}",
+    sttInitial: "마이크 권한이 필요합니다. Chrome 또는 Edge에서 열어주세요.",
+    sttListening: "인식 중",
+    sttReconnecting: "재연결 중…",
+    sttStopped: "중지됨",
+    sttUnsupported: "이 기기에서는 음성 인식을 사용할 수 없습니다. Chrome이나 Edge에서 열어주세요.",
+    noMic: "마이크를 찾을 수 없습니다. 연결을 확인해주세요.",
+    cannotStart: "시작할 수 없습니다. 한 번 정지한 후 다시 눌러주세요.",
+    logEmpty: "[연결]로 통화, [시작]으로 자막이 나옵니다.",
+    hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다. API 키는 이 페이지를 닫으면 사라집니다.",
+    translating: "번역 중…",
+    noKeyLocal: "API 키를 입력하면 번역됩니다",
+    translateFailed: "번역하지 못했습니다 ({detail})",
+    emptyResponse: "빈 응답",
+    peerNoKey: "상대방이 번역 키를 설정하지 않았습니다",
+    peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
+    state_new: "미접속",
+    state_connecting: "연결 중",
+    state_checking: "확인 중",
+    state_connected: "연결됨",
+    state_completed: "완료",
+    state_disconnected: "연결 끊김",
+    state_failed: "실패",
+    state_closed: "종료"
+  }
+};
+
+let currentLang = "ja";
+
+function t(key, params = {}) {
+  const dict = I18N[currentLang] || I18N.ja;
+  const str = dict[key] ?? I18N.ja[key] ?? key;
+  return str.replace(/\{(\w+)\}/g, (_, k) => (params[k] !== undefined ? params[k] : ""));
+}
+
+function stateLabel(state) {
+  if (!state || state === "-") return "-";
+  return t("state_" + state);
+}
+
 const el = {
   roomInput: document.getElementById("roomInput"),
+  createRoomBtn: document.getElementById("createRoomBtn"),
+  shareLinkRow: document.getElementById("shareLinkRow"),
+  shareLinkInput: document.getElementById("shareLinkInput"),
   connectBtn: document.getElementById("connectBtn"),
   hangupBtn: document.getElementById("hangupBtn"),
   direction: document.getElementById("direction"),
+  dirOptJaKo: document.getElementById("dirOptJaKo"),
+  dirOptKoJa: document.getElementById("dirOptKoJa"),
   apikey: document.getElementById("apikey"),
   toggle: document.getElementById("toggle"),
+  uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
   sttStatus: document.getElementById("sttStatus"),
   log: document.getElementById("log"),
+  hint: document.getElementById("hint"),
   remoteAudio: document.getElementById("remoteAudio")
 };
 
-function setStatus(text, cls = "") {
-  el.status.textContent = text;
-  el.status.className = cls;
+/* ---------- ステータス表示 ---------- */
+/* 表示中の状態をkey+paramsで保持しておき、言語切替時に
+   同じ状態のまま再描画できるようにする。                */
+
+let statusState = { key: "statusInitial", params: {}, cls: "" };
+let sttState = { key: "sttInitial", params: {}, cls: "" };
+
+function renderStatus() {
+  el.status.textContent = t(statusState.key, statusState.params);
+  el.status.className = statusState.cls;
 }
 
-function setError(text) {
-  setStatus(text, "error");
+function setStatus(key, params = {}, cls = "") {
+  statusState = { key, params, cls };
+  renderStatus();
 }
 
-function setSttStatus(text, cls = "") {
-  el.sttStatus.textContent = text;
-  el.sttStatus.className = cls;
+function setError(key, params = {}) {
+  setStatus(key, params, "error");
+}
+
+function renderSttStatus() {
+  el.sttStatus.textContent = t(sttState.key, sttState.params);
+  el.sttStatus.className = sttState.cls;
+}
+
+function setSttStatus(key, params = {}, cls = "") {
+  sttState = { key, params, cls };
+  renderSttStatus();
 }
 
 /* ---------- Firebase 初期化 ---------- */
@@ -212,7 +376,7 @@ let firebaseConfig;
 try {
   ({ firebaseConfig } = await import("./firebase-config.js"));
 } catch (err) {
-  setError("firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。");
+  setError("configMissing");
   throw err;
 }
 
@@ -241,12 +405,19 @@ let answerRef = null;
 let offerCandidatesRef = null;
 let answerCandidatesRef = null;
 
-let role = "-";
+// タブを閉じただけでも部屋が消えるようにするためのonDisconnect登録
+let roomDisconnect = null;
+
+let roleKey = null; // null / "roleOffer" / "roleAnswer"
 let connState = "-";
 let iceState = "-";
 
 function updateCallInfo() {
-  el.callInfo.textContent = `役割: ${role} ・ 接続: ${connState} ・ ICE: ${iceState}`;
+  el.callInfo.textContent = t("callInfoTemplate", {
+    role: roleKey ? t(roleKey) : "-",
+    conn: stateLabel(connState),
+    ice: stateLabel(iceState)
+  });
 }
 
 function stateClass(state) {
@@ -258,8 +429,9 @@ function stateClass(state) {
 function resetUI() {
   el.connectBtn.disabled = false;
   el.roomInput.disabled = false;
+  el.createRoomBtn.disabled = false;
   el.hangupBtn.disabled = true;
-  role = "-";
+  roleKey = null;
   connState = "-";
   iceState = "-";
   updateCallInfo();
@@ -302,7 +474,7 @@ function handlePeerMessage(msg) {
     const dst = peerPending.get(msg.id);
     if (!dst) return;
     dst.className = "dst failed";
-    dst.textContent = "相手側で翻訳できませんでした（" + msg.message + "）";
+    dst.textContent = msg.reason === "no-key" ? t("peerNoKey") : t("peerTranslateFailed");
     peerPending.delete(msg.id);
   }
 }
@@ -312,14 +484,15 @@ function handlePeerMessage(msg) {
 async function connect() {
   const inputId = el.roomInput.value.trim();
   if (!inputId) {
-    setError("合言葉を入力してください。");
+    setError("roomIdEmpty");
     return;
   }
   roomId = inputId;
 
   el.connectBtn.disabled = true;
   el.roomInput.disabled = true;
-  setStatus("マイクを準備中…");
+  el.createRoomBtn.disabled = true;
+  setStatus("micPreparing");
 
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
@@ -327,7 +500,7 @@ async function connect() {
       video: false
     });
   } catch (err) {
-    setError("マイクが許可されていません。ブラウザの設定で許可してください。");
+    setError("micDenied");
     resetUI();
     return;
   }
@@ -339,7 +512,7 @@ async function connect() {
     const roomData = snap.val();
 
     if (roomData && roomData.offer && roomData.answer) {
-      setError("この合言葉にはすでに2人います。別の合言葉を使ってください。");
+      setError("alreadyTwo");
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
       resetUI();
@@ -347,7 +520,12 @@ async function connect() {
     }
 
     el.hangupBtn.disabled = false;
-    setStatus("シグナリング中…");
+    setStatus("signaling");
+
+    // ここで登録しておけば、タブを閉じる／回線が切れるだけで
+    // 相手を待たずに部屋データが自動で消える。
+    roomDisconnect = onDisconnect(roomRef);
+    roomDisconnect.remove().catch(() => {});
 
     pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -360,7 +538,7 @@ async function connect() {
       if (!pc) return;
       connState = pc.connectionState;
       updateCallInfo();
-      setStatus(`接続状態: ${pc.connectionState}`, stateClass(pc.connectionState));
+      setStatus("connStateMsg", { state: stateLabel(pc.connectionState) }, stateClass(pc.connectionState));
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -368,13 +546,13 @@ async function connect() {
       iceState = pc.iceConnectionState;
       updateCallInfo();
       if (pc.iceConnectionState === "failed") {
-        setError("ICE接続に失敗しました。相手と別ネットワークの場合、TURNサーバーの設定が必要な可能性があります。");
+        setError("iceFailed");
       }
     };
 
     if (!roomData || !roomData.offer) {
       /* 先に入った側: offerを作る */
-      role = "offer（先に入った側）";
+      roleKey = "roleOffer";
       updateCallInfo();
 
       dataChannel = pc.createDataChannel("subtitles");
@@ -406,7 +584,7 @@ async function connect() {
       });
     } else {
       /* 後から入った側: answerを返す */
-      role = "answer（後から入った側）";
+      roleKey = "roleAnswer";
       updateCallInfo();
 
       pc.ondatachannel = (e) => {
@@ -434,10 +612,11 @@ async function connect() {
     }
   } catch (err) {
     if (isPermissionDenied(err)) {
-      setError("合言葉は12文字以上にしてください。");
+      setError("roomIdTooShort");
     } else {
-      setError("Firebaseとの通信に失敗しました（" + err.message + "）。");
+      setError("firebaseError", { message: err.message });
     }
+    if (roomDisconnect) { roomDisconnect.cancel().catch(() => {}); roomDisconnect = null; }
     if (pc) { pc.close(); pc = null; }
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     resetUI();
@@ -455,6 +634,11 @@ async function hangup() {
   if (answerRef) { off(answerRef); answerRef = null; }
   if (offerCandidatesRef) { off(offerCandidatesRef); offerCandidatesRef = null; }
   if (answerCandidatesRef) { off(answerCandidatesRef); answerCandidatesRef = null; }
+
+  if (roomDisconnect) {
+    await roomDisconnect.cancel().catch(() => {});
+    roomDisconnect = null;
+  }
 
   if (dataChannel) {
     dataChannel.close();
@@ -476,11 +660,48 @@ async function hangup() {
   }
 
   resetUI();
-  setStatus("切断しました。");
+  setStatus("hangupDone");
 }
 
 el.connectBtn.addEventListener("click", connect);
 el.hangupBtn.addEventListener("click", hangup);
+
+/* ---------- 部屋の作成: 合言葉をリンクにして共有する ---------- */
+
+function generateRoomId() {
+  // 9バイト→base64urlで12文字ちょうど。DBルールの12文字以上を満たす。
+  const bytes = crypto.getRandomValues(new Uint8Array(9));
+  let binary = "";
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+async function createRoom() {
+  const newRoomId = generateRoomId();
+  el.roomInput.value = newRoomId;
+
+  const link = `${location.origin}${location.pathname}?room=${newRoomId}`;
+  history.replaceState(null, "", `?room=${newRoomId}`);
+
+  el.shareLinkInput.value = link;
+  el.shareLinkRow.hidden = false;
+
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus("linkCopied");
+  } catch {
+    setStatus("linkCopyFailed");
+    el.shareLinkInput.select();
+  }
+}
+
+el.createRoomBtn.addEventListener("click", createRoom);
+
+// リンクで開かれた場合、URLの?roomを合言葉欄に反映しておく
+const sharedRoomId = new URLSearchParams(location.search).get("room");
+if (sharedRoomId) {
+  el.roomInput.value = sharedRoomId;
+}
 
 /* ---------- STT: 差し替え可能なインターフェース ---------- */
 /* index.html と同じロジック。後で差し替えるときは start/stop と
@@ -500,7 +721,7 @@ class WebSpeechSTT {
   start() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      this.onState("この端末では音声認識が使えません。Chrome か Edge で開いてください。", "error");
+      this.onState("sttUnsupported", "error");
       return false;
     }
     this.running = true;
@@ -514,7 +735,7 @@ class WebSpeechSTT {
     rec.continuous = true;
     rec.interimResults = true;
 
-    rec.onstart = () => this.onState("認識中", "live");
+    rec.onstart = () => this.onState("sttListening", "live");
 
     rec.onresult = (e) => {
       let interim = "";
@@ -533,10 +754,10 @@ class WebSpeechSTT {
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         this.running = false;
-        this.onState("マイクが許可されていません。ブラウザの設定で許可してください。", "error");
+        this.onState("micDenied", "error");
       } else if (e.error === "audio-capture") {
         this.running = false;
-        this.onState("マイクが見つかりません。接続を確認してください。", "error");
+        this.onState("noMic", "error");
       }
       // no-speech / network / aborted は onend の再起動にまかせる
     };
@@ -545,10 +766,10 @@ class WebSpeechSTT {
     // running のあいだは張り直し続けるのがこのループ。
     rec.onend = () => {
       if (!this.running) {
-        this.onState("停止中");
+        this.onState("sttStopped");
         return;
       }
-      this.onState("再接続中…");
+      this.onState("sttReconnecting");
       clearTimeout(this.restartTimer);
       this.restartTimer = setTimeout(() => {
         if (this.running) this._spawn(SR);
@@ -559,7 +780,7 @@ class WebSpeechSTT {
     try {
       rec.start();
     } catch (err) {
-      this.onState("開始できません。一度停止してから押し直してください。", "error");
+      this.onState("cannotStart", "error");
     }
   }
 
@@ -568,7 +789,7 @@ class WebSpeechSTT {
     clearTimeout(this.restartTimer);
     if (this.rec) this.rec.abort();
     this.onInterim("");
-    this.onState("停止中");
+    this.onState("sttStopped");
   }
 }
 
@@ -577,6 +798,11 @@ class WebSpeechSTT {
 const history = [];          // 直近の文脈（原文/訳文のペア）
 const queue = [];            // 順番を崩さないための直列キュー
 let draining = false;
+
+function formatErrorDetail(message) {
+  if (message === "EMPTY_RESPONSE") return t("emptyResponse");
+  return message;
+}
 
 async function translate(text, conf, key) {
   const context = history.slice(-4)
@@ -608,7 +834,7 @@ async function translate(text, conf, key) {
     if (res.ok) {
       const data = await res.json();
       const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!out) throw new Error("空の応答");
+      if (!out) throw new Error("EMPTY_RESPONSE");
       return out.trim();
     }
 
@@ -660,7 +886,7 @@ function addTurn(srcText, conf, isPeer = false) {
 
   const dst = document.createElement("div");
   dst.className = "dst pending";
-  dst.textContent = "翻訳中…";
+  dst.textContent = t("translating");
 
   turn.append(src, dst);
   el.log.insertBefore(turn, interimEl.parentNode === el.log ? interimEl : null);
@@ -687,8 +913,8 @@ function handleFinal(text) {
 
   if (!key) {
     dst.className = "dst failed";
-    dst.textContent = "APIキーを入れると翻訳されます";
-    sendToPeer({ kind: "subtitle-failed", id, message: "送信側でAPIキーが未設定です" });
+    dst.textContent = t("noKeyLocal");
+    sendToPeer({ kind: "subtitle-failed", id, reason: "no-key" });
     return;
   }
 
@@ -702,8 +928,8 @@ function handleFinal(text) {
       sendToPeer({ kind: "subtitle-translated", id, text: out });
     } catch (err) {
       dst.className = "dst failed";
-      dst.textContent = "翻訳できませんでした（" + err.message + "）";
-      sendToPeer({ kind: "subtitle-failed", id, message: err.message });
+      dst.textContent = t("translateFailed", { detail: formatErrorDetail(err.message) });
+      sendToPeer({ kind: "subtitle-failed", id, reason: "error" });
     }
     el.log.scrollTop = el.log.scrollHeight;
   });
@@ -713,7 +939,7 @@ el.toggle.addEventListener("click", () => {
   if (stt && stt.running) {
     stt.stop();
     stt = null;
-    el.toggle.textContent = "開始";
+    el.toggle.textContent = t("startBtn");
     el.toggle.classList.remove("stop");
     el.direction.disabled = false;
     return;
@@ -724,17 +950,51 @@ el.toggle.addEventListener("click", () => {
     lang: conf.src,
     onInterim: showInterim,
     onFinal: handleFinal,
-    onState: setSttStatus
+    onState: (key, cls) => setSttStatus(key, {}, cls)
   });
 
   if (stt.start()) {
-    el.toggle.textContent = "停止";
+    el.toggle.textContent = t("stopBtn");
     el.toggle.classList.add("stop");
     el.direction.disabled = true;
   } else {
     stt = null;
   }
 });
+
+/* ---------- 表示言語の切替 ---------- */
+/* UI言語を切り替えたら、翻訳方向（誰の発話をどちらに訳すか）も
+   対応する組み合わせに自動で合わせる。手動で戻したい場合のために
+   セレクト自体は変更可能なまま残す。                              */
+
+function applyI18n() {
+  document.documentElement.lang = currentLang;
+
+  el.roomInput.placeholder = t("roomPlaceholder");
+  el.apikey.placeholder = t("apiKeyPlaceholder");
+  el.createRoomBtn.textContent = t("createRoomBtn");
+  el.connectBtn.textContent = t("connectBtn");
+  el.hangupBtn.textContent = t("hangupBtn");
+  el.toggle.textContent = t(stt && stt.running ? "stopBtn" : "startBtn");
+  el.dirOptJaKo.textContent = t("directionJaKo");
+  el.dirOptKoJa.textContent = t("directionKoJa");
+  el.hint.textContent = t("hint");
+
+  const emptyEl = el.log.querySelector(".empty");
+  if (emptyEl) emptyEl.textContent = t("logEmpty");
+
+  renderStatus();
+  renderSttStatus();
+  updateCallInfo();
+}
+
+el.uiLang.addEventListener("change", () => {
+  currentLang = el.uiLang.value;
+  el.direction.value = currentLang === "ko" ? "ko-ja" : "ja-ko";
+  applyI18n();
+});
+
+applyI18n();
 </script>
 </body>
 </html>
