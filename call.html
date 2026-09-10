@@ -345,10 +345,16 @@ const I18N = {
 
 let currentLang = "ja";
 
-function t(key, params = {}) {
-  const dict = I18N[currentLang] || I18N.ja;
+// currentLangを問わず、指定した言語で文言を引く（招待文のように相手の
+// 言語で作る必要があるものに使う。自分の画面の言語は変えたくないので）。
+function tFor(lang, key, params = {}) {
+  const dict = I18N[lang] || I18N.ja;
   const str = dict[key] ?? I18N.ja[key] ?? key;
   return str.replace(/\{(\w+)\}/g, (_, k) => (params[k] !== undefined ? params[k] : ""));
+}
+
+function t(key, params = {}) {
+  return tFor(currentLang, key, params);
 }
 
 function stateLabel(state) {
@@ -804,8 +810,14 @@ async function createRoom() {
 }
 
 async function copyInvite() {
-  const link = ensureRoomLink();
-  const text = t("inviteTemplate", { link });
+  const roomLink = ensureRoomLink();
+
+  // 招待文は相手向け。自分のUI言語とは逆の言語（＝相手の言語）で作る。
+  // 自分の画面の表示言語（currentLang）はここでは一切変更しない。
+  const inviteLang = currentLang === "ko" ? "ja" : "ko";
+  const link = `${roomLink}&lang=${inviteLang}`;
+  const text = tFor(inviteLang, "inviteTemplate", { link });
+
   try {
     await navigator.clipboard.writeText(text);
     setStatus("inviteCopied");
@@ -819,10 +831,20 @@ async function copyInvite() {
 el.createRoomBtn.addEventListener("click", createRoom);
 el.inviteBtn.addEventListener("click", copyInvite);
 
-// リンクで開かれた場合、URLの?roomを合言葉欄に反映しておく
-const sharedRoomId = new URLSearchParams(location.search).get("room");
+// リンクで開かれた場合、URLの?roomを合言葉欄に反映しておく。
+// ?langがあれば、そのUI言語と対応する翻訳方向を初期選択しておく
+// （招待文コピーで付与したものを開いた側の初期設定）。
+const sharedParams = new URLSearchParams(location.search);
+const sharedRoomId = sharedParams.get("room");
 if (sharedRoomId) {
   el.roomInput.value = sharedRoomId;
+}
+
+const sharedLang = sharedParams.get("lang");
+if (sharedLang === "ja" || sharedLang === "ko") {
+  currentLang = sharedLang;
+  el.uiLang.value = sharedLang;
+  el.direction.value = sharedLang === "ko" ? "ko-ja" : "ja-ko";
 }
 
 /* ---------- STT: 差し替え可能なインターフェース ---------- */
