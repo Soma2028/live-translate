@@ -227,6 +227,21 @@ const LANGS = {
   "ko-ja": { src: "ko-KR", color: "var(--ko)", code: "KO" }
 };
 
+// 翻訳前に確定テキストへ適用する用語辞書。STTが誤認識しがちな単語を
+// ここで直してから翻訳に渡す。キー=誤認識されがちな表記 / 値=正しい表記。
+const GLOSSARY = {
+  "来たさと": "北里",
+  "きたさと": "北里"
+};
+
+function applyGlossary(text) {
+  let result = text;
+  for (const [wrong, right] of Object.entries(GLOSSARY)) {
+    result = result.replaceAll(wrong, right);
+  }
+  return result;
+}
+
 /* ---------- i18n: 表示言語ごとの文言 ---------- */
 /* キーで引く形にまとめてある。増やすときはここに追記すればよい。 */
 
@@ -1181,6 +1196,8 @@ function isDuplicateFinal(text) {
 let provisionalTurn = null; // { text, dst, conf, direction, id }
 
 function handleStableInterim(text) {
+  text = applyGlossary(text);
+
   if (pendingBatch || provisionalTurn) return;
   if (text.length < BATCH_MIN_LENGTH) return;
 
@@ -1198,6 +1215,8 @@ function retranslateTurn(pending, newText) {
 }
 
 function handleFinal(text) {
+  text = applyGlossary(text);
+
   if (provisionalTurn) {
     const pending = provisionalTurn;
     provisionalTurn = null;
