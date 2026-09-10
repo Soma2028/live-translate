@@ -220,6 +220,16 @@ import {
   getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
+// STTの動作切り分け用デバッグログ。URLに ?debug=1 が付いているときだけ出力する。
+const DEBUG = new URLSearchParams(location.search).get("debug") === "1";
+const debugStartTime = performance.now();
+
+function debugLog(...args) {
+  if (!DEBUG) return;
+  const elapsed = ((performance.now() - debugStartTime) / 1000).toFixed(2);
+  console.log(`[${elapsed}s]`, ...args);
+}
+
 const TRANSLATE_WORKER_URL = "https://live-translate-translator.soma2028.workers.dev";
 
 const LANGS = {
@@ -909,6 +919,7 @@ class WebSpeechSTT {
     rec.interimResults = true;
 
     rec.onstart = () => {
+      debugLog("STT start");
       this.onState("sttListening", "live");
       clearTimeout(this.cycleTimer);
       this.cycleTimer = setTimeout(() => this._cycle(SR), STT_CYCLE_INTERVAL_MS);
@@ -929,6 +940,7 @@ class WebSpeechSTT {
     };
 
     rec.onerror = (e) => {
+      debugLog("STT error:", e.error);
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         this.running = false;
         this.onState("micDenied", "error");
@@ -942,6 +954,7 @@ class WebSpeechSTT {
     // Web Speech API は数十秒〜数分で勝手に止まる。
     // running のあいだは張り直し続けるのがこのループ。
     rec.onend = () => {
+      debugLog("STT end");
       // すでに次のインスタンスに切り替わっている（4分サイクル or
       // このonend自身の再起動）場合、古い方のonendは何もしない。
       if (this.rec !== rec) return;
@@ -969,12 +982,14 @@ class WebSpeechSTT {
   // 古い方を止める。
   _cycle(SR) {
     if (!this.running) return;
+    debugLog("4分サイクル: 切り替え開始");
     const oldRec = this.rec;
 
     this._spawn(SR);
 
     setTimeout(() => {
       try { oldRec.stop(); } catch {}
+      debugLog("4分サイクル: 切り替え完了");
     }, STT_CYCLE_OVERLAP_MS);
   }
 
@@ -1201,6 +1216,8 @@ function handleStableInterim(text) {
   if (pendingBatch || provisionalTurn) return;
   if (text.length < BATCH_MIN_LENGTH) return;
 
+  debugLog("先出し翻訳 発火:", text);
+
   const direction = el.direction.value;
   const conf = LANGS[direction];
   const dst = addTurn(text, conf, false);
@@ -1219,15 +1236,20 @@ function handleFinal(text) {
 
   if (provisionalTurn) {
     const pending = provisionalTurn;
+    const matched = text === pending.text;
+    debugLog("final受信:", text, matched ? "(先出しと一致)" : "(先出しと不一致)");
+
     provisionalTurn = null;
     recentFinals.push({ text, time: Date.now() });
 
     // 先出し翻訳の原文と実際のfinalが違っていたときだけ翻訳し直す。
-    if (text !== pending.text) {
+    if (!matched) {
       retranslateTurn(pending, text);
     }
     return;
   }
+
+  debugLog("final受信:", text, "(先出しなし)");
 
   if (isDuplicateFinal(text)) return;
 
