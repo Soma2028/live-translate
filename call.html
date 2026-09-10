@@ -151,6 +151,7 @@
 <header>
   <input type="text" id="roomInput" placeholder="合言葉（ルームID）" autocomplete="off">
   <button id="createRoomBtn">部屋を作る</button>
+  <button id="inviteBtn">招待文をコピー</button>
   <button id="connectBtn">つなぐ</button>
   <button id="hangupBtn" class="hangup" disabled>切る</button>
 
@@ -203,6 +204,7 @@ const I18N = {
     roomPlaceholder: "合言葉（ルームID）",
     apiKeyPlaceholder: "Gemini APIキー",
     createRoomBtn: "部屋を作る",
+    inviteBtn: "招待文をコピー",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -222,6 +224,9 @@ const I18N = {
     roomIdEmpty: "合言葉を入力してください。",
     linkCopied: "リンクをコピーしました。相手に送ってください。",
     linkCopyFailed: "コピーに失敗しました。下のリンクを手動でコピーしてください。",
+    inviteCopied: "招待文をコピーしました。相手に送ってください。",
+    inviteCopyFailed: "コピーに失敗しました。下の欄から手動でコピーしてください。",
+    inviteTemplate: "リアルタイム翻訳通話アプリを作ってみた。使ってみる？\n\n・PCのChromeで開いてね（iPhone/iPadは字幕を送れません）\n・下のリンクを開いて「つなぐ」を押すだけ\n・マイクの許可をしてね\n・「日本語 → 韓国語」を選んで「開始」を押してね\n\n翻訳にはGoogleのAPIキーが必要です。ここで無料で取得できます:\nhttps://aistudio.google.com/apikey\n\n{link}",
     configMissing: "firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。",
     roleOffer: "offer（先に入った側）",
     roleAnswer: "answer（後から入った側）",
@@ -254,6 +259,7 @@ const I18N = {
     roomPlaceholder: "비밀번호(방 ID)",
     apiKeyPlaceholder: "Gemini API 키",
     createRoomBtn: "방 만들기",
+    inviteBtn: "초대 문구 복사",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -273,6 +279,9 @@ const I18N = {
     roomIdEmpty: "비밀번호를 입력해주세요.",
     linkCopied: "링크를 복사했습니다. 상대방에게 보내주세요.",
     linkCopyFailed: "복사에 실패했습니다. 아래 링크를 직접 복사해주세요.",
+    inviteCopied: "초대 문구를 복사했습니다. 상대방에게 보내주세요.",
+    inviteCopyFailed: "복사에 실패했습니다. 아래 칸에서 직접 복사해주세요.",
+    inviteTemplate: "실시간 번역 통화 앱을 만들어 봤어. 한번 써볼래?\n\n・PC의 Chrome으로 열어줘 (iPhone/iPad는 자막을 보낼 수 없어)\n・아래 링크를 열고 \"연결\"을 누르면 돼\n・마이크 권한을 허용해줘\n・\"한국어 → 일본어\"를 선택하고 \"시작\"을 눌러\n\n번역에는 Google API 키가 필요해. 여기서 무료로 받을 수 있어:\nhttps://aistudio.google.com/apikey\n\n{link}",
     configMissing: "firebase-config.js 파일을 찾을 수 없습니다. firebase-config.example.js를 복사해서 만들어주세요.",
     roleOffer: "offer (먼저 들어온 쪽)",
     roleAnswer: "answer (나중에 들어온 쪽)",
@@ -319,6 +328,7 @@ function stateLabel(state) {
 const el = {
   roomInput: document.getElementById("roomInput"),
   createRoomBtn: document.getElementById("createRoomBtn"),
+  inviteBtn: document.getElementById("inviteBtn"),
   shareLinkRow: document.getElementById("shareLinkRow"),
   shareLinkInput: document.getElementById("shareLinkInput"),
   connectBtn: document.getElementById("connectBtn"),
@@ -430,6 +440,7 @@ function resetUI() {
   el.connectBtn.disabled = false;
   el.roomInput.disabled = false;
   el.createRoomBtn.disabled = false;
+  el.inviteBtn.disabled = false;
   el.hangupBtn.disabled = true;
   roleKey = null;
   connState = "-";
@@ -492,6 +503,7 @@ async function connect() {
   el.connectBtn.disabled = true;
   el.roomInput.disabled = true;
   el.createRoomBtn.disabled = true;
+  el.inviteBtn.disabled = true;
   setStatus("micPreparing");
 
   try {
@@ -676,16 +688,25 @@ function generateRoomId() {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-async function createRoom() {
-  const newRoomId = generateRoomId();
-  el.roomInput.value = newRoomId;
+// 生成済みのリンクをここで保持する。shareLinkInputの表示は
+// 招待文コピー失敗時に一時的に別の内容へ差し替わるため、
+// 「部屋が作成済みかどうか」の判定はこの変数を正とする。
+let currentRoomLink = null;
 
-  const link = `${location.origin}${location.pathname}?room=${newRoomId}`;
-  history.replaceState(null, "", `?room=${newRoomId}`);
-
-  el.shareLinkInput.value = link;
+function ensureRoomLink() {
+  if (!currentRoomLink) {
+    const newRoomId = generateRoomId();
+    el.roomInput.value = newRoomId;
+    currentRoomLink = `${location.origin}${location.pathname}?room=${newRoomId}`;
+    history.replaceState(null, "", `?room=${newRoomId}`);
+  }
+  el.shareLinkInput.value = currentRoomLink;
   el.shareLinkRow.hidden = false;
+  return currentRoomLink;
+}
 
+async function createRoom() {
+  const link = ensureRoomLink();
   try {
     await navigator.clipboard.writeText(link);
     setStatus("linkCopied");
@@ -695,7 +716,21 @@ async function createRoom() {
   }
 }
 
+async function copyInvite() {
+  const link = ensureRoomLink();
+  const text = t("inviteTemplate", { link });
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("inviteCopied");
+  } catch {
+    setStatus("inviteCopyFailed");
+    el.shareLinkInput.value = text;
+    el.shareLinkInput.select();
+  }
+}
+
 el.createRoomBtn.addEventListener("click", createRoom);
+el.inviteBtn.addEventListener("click", copyInvite);
 
 // リンクで開かれた場合、URLの?roomを合言葉欄に反映しておく
 const sharedRoomId = new URLSearchParams(location.search).get("room");
@@ -973,6 +1008,7 @@ function applyI18n() {
   el.roomInput.placeholder = t("roomPlaceholder");
   el.apikey.placeholder = t("apiKeyPlaceholder");
   el.createRoomBtn.textContent = t("createRoomBtn");
+  el.inviteBtn.textContent = t("inviteBtn");
   el.connectBtn.textContent = t("connectBtn");
   el.hangupBtn.textContent = t("hangupBtn");
   el.toggle.textContent = t(stt && stt.running ? "stopBtn" : "startBtn");
