@@ -285,7 +285,7 @@ const I18N = {
     configMissing: "firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。",
     roleOffer: "offer（先に入った側）",
     roleAnswer: "answer（後から入った側）",
-    callInfoTemplate: "役割: {role} ・ 接続: {conn} ・ ICE: {ice}",
+    callInfoTemplate: "役割: {role} ・ 接続: {conn} ・ ICE: {ice} ・ STT再接続: {restarts}",
     sttInitial: "マイクの許可が必要です。Chrome または Edge で開いてください。",
     sttListening: "認識中",
     sttReconnecting: "再接続中…",
@@ -340,7 +340,7 @@ const I18N = {
     configMissing: "firebase-config.js 파일을 찾을 수 없습니다. firebase-config.example.js를 복사해서 만들어주세요.",
     roleOffer: "offer (먼저 들어온 쪽)",
     roleAnswer: "answer (나중에 들어온 쪽)",
-    callInfoTemplate: "역할: {role} ・ 연결: {conn} ・ ICE: {ice}",
+    callInfoTemplate: "역할: {role} ・ 연결: {conn} ・ ICE: {ice} ・ STT 재접속: {restarts}",
     sttInitial: "마이크 권한이 필요합니다. Chrome 또는 Edge에서 열어주세요.",
     sttListening: "인식 중",
     sttReconnecting: "재연결 중…",
@@ -486,12 +486,14 @@ let roleKey = null; // null / "roleOffer" / "roleAnswer"
 let connState = "-";
 let iceState = "-";
 let peerJoined = false; // 「相手が参加/退出しました」の二重表示を防ぐためのフラグ
+let sttRestartCount = 0; // 無音監視による強制張り直しの回数（デバッグ用表示）
 
 function updateCallInfo() {
   el.callInfo.textContent = t("callInfoTemplate", {
     role: roleKey ? t(roleKey) : "-",
     conn: stateLabel(connState),
-    ice: stateLabel(iceState)
+    ice: stateLabel(iceState),
+    restarts: sttRestartCount
   });
 }
 
@@ -889,16 +891,28 @@ if (sharedLang === "ja" || sharedLang === "ko") {
 const STT_CYCLE_INTERVAL_MS = 4 * 60 * 1000;
 const STT_CYCLE_OVERLAP_MS = 300;
 
+// onendが呼ばれないまま無反応になるChromeのケース対策。onresultが
+// 30秒以上まったく来ていなければ「死んでいる」とみなし、4分サイクルと
+// 同じ仕組み（新しい方を先に立ち上げてから古い方を止める）で強制的に
+// 張り直す。無音が続いただけでも張り直してしまうが、再起動のコストは
+// 低いので問題ない。
+const WATCHDOG_SILENCE_MS = 30 * 1000;
+const WATCHDOG_CHECK_INTERVAL_MS = 5 * 1000;
+
 class WebSpeechSTT {
-  constructor({ lang, onInterim, onFinal, onState }) {
+  constructor({ lang, onInterim, onFinal, onState, onWatchdogRestart }) {
     this.lang = lang;
     this.onInterim = onInterim;
     this.onFinal = onFinal;
     this.onState = onState;
+    this.onWatchdogRestart = onWatchdogRestart || (() => {});
     this.running = false;
     this.rec = null;
     this.restartTimer = null;
     this.cycleTimer = null;
+    this.watchdogTimer = null;
+    this.lastResultTime = 0;
+    this.restartCount = 0;
   }
 
   start() {
@@ -908,8 +922,26 @@ class WebSpeechSTT {
       return false;
     }
     this.running = true;
+    this.lastResultTime = Date.now();
+    this._startWatchdog(SR);
     this._spawn(SR);
     return true;
+  }
+
+  _startWatchdog(SR) {
+    clearInterval(this.watchdogTimer);
+    this.watchdogTimer = setInterval(() => {
+      if (!this.running) return;
+      const silence = Date.now() - this.lastResultTime;
+      if (silence < WATCHDOG_SILENCE_MS) return;
+
+      debugLog("無音監視: " + Math.round(silence / 1000) + "秒onresultなし。強制的に張り直す");
+      this.restartCount += 1;
+      this.onWatchdogRestart(this.restartCount);
+      // 張り直した直後にまた同じ判定で再発火しないよう、ここでリセットする。
+      this.lastResultTime = Date.now();
+      this._cycle(SR);
+    }, WATCHDOG_CHECK_INTERVAL_MS);
   }
 
   _spawn(SR) {
@@ -926,6 +958,7 @@ class WebSpeechSTT {
     };
 
     rec.onresult = (e) => {
+      this.lastResultTime = Date.now();
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const text = e.results[i][0].transcript;
@@ -997,6 +1030,7 @@ class WebSpeechSTT {
     this.running = false;
     clearTimeout(this.restartTimer);
     clearTimeout(this.cycleTimer);
+    clearInterval(this.watchdogTimer);
     if (this.rec) this.rec.abort();
     this.onInterim("");
     this.onState("sttStopped");
@@ -1284,12 +1318,19 @@ el.toggle.addEventListener("click", () => {
     return;
   }
 
+  sttRestartCount = 0;
+  updateCallInfo();
+
   const conf = LANGS[el.direction.value];
   stt = new WebSpeechSTT({
     lang: conf.src,
     onInterim: showInterim,
     onFinal: handleFinal,
-    onState: (key, cls) => setSttStatus(key, {}, cls)
+    onState: (key, cls) => setSttStatus(key, {}, cls),
+    onWatchdogRestart: (count) => {
+      sttRestartCount = count;
+      updateCallInfo();
+    }
   });
 
   if (stt.start()) {
