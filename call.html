@@ -500,9 +500,21 @@ function markPeerLeft() {
 /* 音声レーン（WebRTC audio）とは完全に独立させる。
    自分のSTT確定テキストと、その翻訳結果だけを相手に送る。      */
 
-// 相手の発言id -> dst要素。翻訳完了後も削除しない。先出し翻訳の訂正が
-// 遅れて届いたときに、同じidで既存の吹き出しを見つけて上書きするため。
+// 相手の発言id -> { dst要素, 作成時刻 }。翻訳完了後も削除しない。
+// 先出し翻訳の訂正が遅れて届いたときに、同じidで既存の吹き出しを
+// 見つけて上書きするため。無制限に増えないよう、新規追加のたびに
+// 30秒より古いエントリを掃除する（訂正は数秒以内に来るので十分な猶予）。
 const peerPending = new Map();
+const PEER_ENTRY_TTL_MS = 30_000;
+
+function prunePeerPending() {
+  const now = Date.now();
+  for (const [id, entry] of peerPending) {
+    if (now - entry.time > PEER_ENTRY_TTL_MS) {
+      peerPending.delete(id);
+    }
+  }
+}
 
 function wireDataChannel() {
   dataChannel.onopen = () => {
@@ -526,30 +538,31 @@ function sendToPeer(obj) {
 
 function handlePeerMessage(msg) {
   if (msg.kind === "subtitle-final") {
-    const existingDst = peerPending.get(msg.id);
-    if (existingDst) {
+    const existing = peerPending.get(msg.id);
+    if (existing) {
       // 同じidの2回目以降 = 先出し翻訳の訂正。既存の吹き出しの原文を
       // 書き換えて翻訳待ちに戻す（新しい吹き出しは作らない）。
-      const srcEl = existingDst.previousElementSibling;
+      const srcEl = existing.dst.previousElementSibling;
       if (srcEl) srcEl.textContent = msg.text;
-      existingDst.className = "dst pending";
-      existingDst.textContent = t("translating");
+      existing.dst.className = "dst pending";
+      existing.dst.textContent = t("translating");
     } else {
+      prunePeerPending();
       const conf = LANGS[msg.direction] || LANGS["ja-ko"];
       const dst = addTurn(msg.text, conf, true);
-      peerPending.set(msg.id, dst);
+      peerPending.set(msg.id, { dst, time: Date.now() });
     }
   } else if (msg.kind === "subtitle-translated") {
-    const dst = peerPending.get(msg.id);
-    if (!dst) return;
-    dst.className = "dst";
-    dst.textContent = msg.text;
+    const entry = peerPending.get(msg.id);
+    if (!entry) return;
+    entry.dst.className = "dst";
+    entry.dst.textContent = msg.text;
     el.log.scrollTop = el.log.scrollHeight;
   } else if (msg.kind === "subtitle-failed") {
-    const dst = peerPending.get(msg.id);
-    if (!dst) return;
-    dst.className = "dst failed";
-    dst.textContent = t("peerTranslateFailed");
+    const entry = peerPending.get(msg.id);
+    if (!entry) return;
+    entry.dst.className = "dst failed";
+    entry.dst.textContent = t("peerTranslateFailed");
   }
 }
 
