@@ -806,6 +806,12 @@ if (sharedRoomId) {
 /* index.html と同じロジック。後で差し替えるときは start/stop と
    同じ形のクラスを書いて new する行だけ差し替えればいい。      */
 
+// 4分ごとに自分から止めて即座に再起動する。長時間の連続認識で精度が
+// 落ちるブラウザ対策。切り替え時に発話が欠けないよう、新しい方を
+// 先に立ち上げてから、少し重ねて（オーバーラップ）古い方を止める。
+const STT_CYCLE_INTERVAL_MS = 4 * 60 * 1000;
+const STT_CYCLE_OVERLAP_MS = 300;
+
 class WebSpeechSTT {
   constructor({ lang, onInterim, onFinal, onState }) {
     this.lang = lang;
@@ -815,6 +821,7 @@ class WebSpeechSTT {
     this.running = false;
     this.rec = null;
     this.restartTimer = null;
+    this.cycleTimer = null;
   }
 
   start() {
@@ -834,7 +841,11 @@ class WebSpeechSTT {
     rec.continuous = true;
     rec.interimResults = true;
 
-    rec.onstart = () => this.onState("sttListening", "live");
+    rec.onstart = () => {
+      this.onState("sttListening", "live");
+      clearTimeout(this.cycleTimer);
+      this.cycleTimer = setTimeout(() => this._cycle(SR), STT_CYCLE_INTERVAL_MS);
+    };
 
     rec.onresult = (e) => {
       let interim = "";
@@ -864,6 +875,10 @@ class WebSpeechSTT {
     // Web Speech API は数十秒〜数分で勝手に止まる。
     // running のあいだは張り直し続けるのがこのループ。
     rec.onend = () => {
+      // すでに次のインスタンスに切り替わっている（4分サイクル or
+      // このonend自身の再起動）場合、古い方のonendは何もしない。
+      if (this.rec !== rec) return;
+
       if (!this.running) {
         this.onState("sttStopped");
         return;
@@ -883,9 +898,23 @@ class WebSpeechSTT {
     }
   }
 
+  // 4分経過時の定期再起動。新しい認識を先に始め、少し重ねてから
+  // 古い方を止める。
+  _cycle(SR) {
+    if (!this.running) return;
+    const oldRec = this.rec;
+
+    this._spawn(SR);
+
+    setTimeout(() => {
+      try { oldRec.stop(); } catch {}
+    }, STT_CYCLE_OVERLAP_MS);
+  }
+
   stop() {
     this.running = false;
     clearTimeout(this.restartTimer);
+    clearTimeout(this.cycleTimer);
     if (this.rec) this.rec.abort();
     this.onInterim("");
     this.onState("sttStopped");
