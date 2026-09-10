@@ -425,9 +425,12 @@ try {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// TURNサーバーの設定。値は後で入れる（NAT越え等でSTUNだけでは繋がらない場合に必要）。
+// TURNサーバーの設定。Metered社のOpen Relay Project（無料・公開クレデンシャル）を使用。
+// NAT越え等でSTUNだけでは繋がらない場合のフォールバック。
 const TURN_SERVERS = [
-  // { urls: "turn:example.com:3478", username: "", credential: "" }
+  { urls: "turn:global.relay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
 ];
 
 const ICE_SERVERS = [
