@@ -220,8 +220,7 @@ import {
   getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-// デプロイ後、実際のCloudflare Worker URLに書き換える（README参照）。
-const TRANSLATE_WORKER_URL = "https://live-translate-translator.YOUR_SUBDOMAIN.workers.dev";
+const TRANSLATE_WORKER_URL = "https://live-translate-translator.soma2028.workers.dev";
 
 const LANGS = {
   "ja-ko": { src: "ja-JP", color: "var(--ja)", code: "JA" },
