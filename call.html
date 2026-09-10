@@ -48,15 +48,6 @@
     color: var(--ink);
   }
   input[type="text"] { min-width: 140px; }
-  input[type="password"] { flex: 1; min-width: 160px; }
-  .save-key-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 13px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
   button {
     cursor: pointer;
     border-color: var(--ink);
@@ -199,11 +190,6 @@
     <option id="dirOptJaKo" value="ja-ko">日本語 → 韓国語</option>
     <option id="dirOptKoJa" value="ko-ja">韓国語 → 日本語</option>
   </select>
-  <input type="password" id="apikey" placeholder="Gemini APIキー" autocomplete="off">
-  <label class="save-key-label">
-    <input type="checkbox" id="saveKey">
-    <span id="saveKeyLabel">このブラウザに保存する</span>
-  </label>
   <button id="toggle">開始</button>
 
   <select id="uiLang">
@@ -234,10 +220,12 @@ import {
   getDatabase, ref, get, set, update, remove, onValue, onChildAdded, push, off, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-const MODEL = "gemini-3.8-flash";
+// デプロイ後、実際のCloudflare Worker URLに書き換える（README参照）。
+const TRANSLATE_WORKER_URL = "https://live-translate-translator.YOUR_SUBDOMAIN.workers.dev";
+
 const LANGS = {
-  "ja-ko": { src: "ja-JP", srcName: "日本語", dstName: "韓国語", color: "var(--ja)", code: "JA" },
-  "ko-ja": { src: "ko-KR", srcName: "韓国語", dstName: "日本語", color: "var(--ko)", code: "KO" }
+  "ja-ko": { src: "ja-JP", color: "var(--ja)", code: "JA" },
+  "ko-ja": { src: "ko-KR", color: "var(--ko)", code: "KO" }
 };
 
 /* ---------- i18n: 表示言語ごとの文言 ---------- */
@@ -246,8 +234,6 @@ const LANGS = {
 const I18N = {
   ja: {
     roomPlaceholder: "合言葉（ルームID）",
-    apiKeyPlaceholder: "Gemini APIキー",
-    saveKeyLabel: "このブラウザに保存する",
     createRoomBtn: "部屋を作る",
     inviteBtn: "招待文をコピー",
     connectBtn: "つなぐ",
@@ -271,7 +257,7 @@ const I18N = {
     linkCopyFailed: "コピーに失敗しました。下のリンクを手動でコピーしてください。",
     inviteCopied: "招待文をコピーしました。相手に送ってください。",
     inviteCopyFailed: "コピーに失敗しました。下の欄から手動でコピーしてください。",
-    inviteTemplate: "リアルタイム翻訳通話アプリを作ってみた。使ってみる？\n\n・PCのChromeで開いてね（iPhone/iPadは字幕を送れません）\n・下のリンクを開いて「つなぐ」を押すだけ\n・マイクの許可をしてね\n・「日本語 → 韓国語」を選んで「開始」を押してね\n\n翻訳にはGoogleのAPIキーが必要です。ここで無料で取得できます:\nhttps://aistudio.google.com/apikey\n\n{link}",
+    inviteTemplate: "リアルタイム翻訳通話アプリを作ってみた。使ってみる？\n\n・PCのChromeで開いてね（iPhone/iPadは字幕を送れません）\n・下のリンクを開いて「つなぐ」を押すだけ\n・マイクの許可をしてね\n・「日本語 → 韓国語」を選んで「開始」を押してね\n\n{link}",
     configMissing: "firebase-config.js が見つかりません。firebase-config.example.js をコピーして作成してください。",
     roleOffer: "offer（先に入った側）",
     roleAnswer: "answer（後から入った側）",
@@ -284,12 +270,10 @@ const I18N = {
     noMic: "マイクが見つかりません。接続を確認してください。",
     cannotStart: "開始できません。一度停止してから押し直してください。",
     logEmpty: "「つなぐ」で通話、「開始」で自分の字幕が出ます。",
-    hint: "自分のマイクだけを認識します。相手の声は認識しません。APIキーは「このブラウザに保存する」を選ばない限りこのページを閉じると消えます。",
+    hint: "自分のマイクだけを認識します。相手の声は認識しません。",
     translating: "翻訳中…",
-    noKeyLocal: "APIキーを入れると翻訳されます",
     translateFailed: "翻訳できませんでした（{detail}）",
     emptyResponse: "空の応答",
-    peerNoKey: "相手が翻訳キーを設定していません",
     peerTranslateFailed: "相手側で翻訳に失敗しました",
     peerJoined: "相手が参加しました",
     peerLeft: "相手が退出しました",
@@ -305,8 +289,6 @@ const I18N = {
   },
   ko: {
     roomPlaceholder: "비밀번호(방 ID)",
-    apiKeyPlaceholder: "Gemini API 키",
-    saveKeyLabel: "이 브라우저에 저장하기",
     createRoomBtn: "방 만들기",
     inviteBtn: "초대 문구 복사",
     connectBtn: "연결",
@@ -330,7 +312,7 @@ const I18N = {
     linkCopyFailed: "복사에 실패했습니다. 아래 링크를 직접 복사해주세요.",
     inviteCopied: "초대 문구를 복사했습니다. 상대방에게 보내주세요.",
     inviteCopyFailed: "복사에 실패했습니다. 아래 칸에서 직접 복사해주세요.",
-    inviteTemplate: "실시간 번역 통화 앱을 만들어 봤어. 한번 써볼래?\n\n・PC의 Chrome으로 열어줘 (iPhone/iPad는 자막을 보낼 수 없어)\n・아래 링크를 열고 \"연결\"을 누르면 돼\n・마이크 권한을 허용해줘\n・\"한국어 → 일본어\"를 선택하고 \"시작\"을 눌러\n\n번역에는 Google API 키가 필요해. 여기서 무료로 받을 수 있어:\nhttps://aistudio.google.com/apikey\n\n{link}",
+    inviteTemplate: "실시간 번역 통화 앱을 만들어 봤어. 한번 써볼래?\n\n・PC의 Chrome으로 열어줘 (iPhone/iPad는 자막을 보낼 수 없어)\n・아래 링크를 열고 \"연결\"을 누르면 돼\n・마이크 권한을 허용해줘\n・\"한국어 → 일본어\"를 선택하고 \"시작\"을 눌러\n\n{link}",
     configMissing: "firebase-config.js 파일을 찾을 수 없습니다. firebase-config.example.js를 복사해서 만들어주세요.",
     roleOffer: "offer (먼저 들어온 쪽)",
     roleAnswer: "answer (나중에 들어온 쪽)",
@@ -343,12 +325,10 @@ const I18N = {
     noMic: "마이크를 찾을 수 없습니다. 연결을 확인해주세요.",
     cannotStart: "시작할 수 없습니다. 한 번 정지한 후 다시 눌러주세요.",
     logEmpty: "[연결]로 통화, [시작]으로 자막이 나옵니다.",
-    hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다. API 키는 \"이 브라우저에 저장하기\"를 선택하지 않으면 이 페이지를 닫으면 사라집니다.",
+    hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다.",
     translating: "번역 중…",
-    noKeyLocal: "API 키를 입력하면 번역됩니다",
     translateFailed: "번역하지 못했습니다 ({detail})",
     emptyResponse: "빈 응답",
-    peerNoKey: "상대방이 번역 키를 설정하지 않았습니다",
     peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
     peerJoined: "상대방이 참여했습니다",
     peerLeft: "상대방이 나갔습니다",
@@ -388,9 +368,6 @@ const el = {
   direction: document.getElementById("direction"),
   dirOptJaKo: document.getElementById("dirOptJaKo"),
   dirOptKoJa: document.getElementById("dirOptKoJa"),
-  apikey: document.getElementById("apikey"),
-  saveKey: document.getElementById("saveKey"),
-  saveKeyLabel: document.getElementById("saveKeyLabel"),
   toggle: document.getElementById("toggle"),
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
@@ -562,7 +539,7 @@ function handlePeerMessage(msg) {
     const dst = peerPending.get(msg.id);
     if (!dst) return;
     dst.className = "dst failed";
-    dst.textContent = msg.reason === "no-key" ? t("peerNoKey") : t("peerTranslateFailed");
+    dst.textContent = t("peerTranslateFailed");
     peerPending.delete(msg.id);
   }
 }
@@ -826,41 +803,6 @@ if (sharedRoomId) {
   el.roomInput.value = sharedRoomId;
 }
 
-/* ---------- Geminiキーの保存 ---------- */
-/* 「このブラウザに保存する」がオンのときだけlocalStorageに入れる。
-   2人だけの私用アプリという前提での、明示的なオプトインの保存。   */
-
-const API_KEY_STORAGE = "liveTranslateGeminiApiKey";
-
-function loadSavedApiKey() {
-  try {
-    const saved = localStorage.getItem(API_KEY_STORAGE);
-    if (saved) {
-      el.apikey.value = saved;
-      el.saveKey.checked = true;
-    }
-  } catch {}
-}
-
-function persistApiKeyIfNeeded() {
-  if (!el.saveKey.checked) return;
-  try {
-    localStorage.setItem(API_KEY_STORAGE, el.apikey.value);
-  } catch {}
-}
-
-el.apikey.addEventListener("input", persistApiKeyIfNeeded);
-
-el.saveKey.addEventListener("change", () => {
-  if (el.saveKey.checked) {
-    persistApiKeyIfNeeded();
-  } else {
-    try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
-  }
-});
-
-loadSavedApiKey();
-
 /* ---------- STT: 差し替え可能なインターフェース ---------- */
 /* index.html と同じロジック。後で差し替えるときは start/stop と
    同じ形のクラスを書いて new する行だけ差し替えればいい。      */
@@ -951,9 +893,8 @@ class WebSpeechSTT {
   }
 }
 
-/* ---------- 翻訳（index.html と同じロジック） ---------- */
+/* ---------- 翻訳（Cloudflare Worker経由でAzure Translatorを呼ぶ） ---------- */
 
-const history = [];          // 直近の文脈（原文/訳文のペア）
 const queue = [];            // 順番を崩さないための直列キュー
 let draining = false;
 
@@ -962,28 +903,14 @@ function formatErrorDetail(message) {
   return message;
 }
 
-async function translate(text, conf, key) {
-  const context = history.slice(-4)
-    .map(h => `${h.src} → ${h.dst}`)
-    .join("\n");
-
-  const prompt =
-    `あなたは通話の同時通訳です。次の${conf.srcName}の発話を${conf.dstName}に訳してください。\n` +
-    `訳文だけを出力し、説明・引用符・原文は付けないこと。\n` +
-    `話し言葉として自然な口語にすること。\n` +
-    (context ? `\n直前のやりとり:\n${context}\n` : "") +
-    `\n発話: ${text}`;
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-  const body = JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
-  });
+async function translate(text, direction) {
+  const [from, to] = direction.split("-");
+  const body = JSON.stringify({ text, from, to });
 
   // 429（レート制限）・503（一時的な過負荷）だけ、1.5秒待って1回だけ再試行する。
   // それ以外のエラーは再試行せず、その場で失敗にする。
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(url, {
+    const res = await fetch(TRANSLATE_WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body
@@ -991,9 +918,8 @@ async function translate(text, conf, key) {
 
     if (res.ok) {
       const data = await res.json();
-      const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!out) throw new Error("EMPTY_RESPONSE");
-      return out.trim();
+      if (!data.text) throw new Error("EMPTY_RESPONSE");
+      return data.text;
     }
 
     if ((res.status === 429 || res.status === 503) && attempt === 0) {
@@ -1085,9 +1011,9 @@ let stt = null;
 // 原文（src）はその場で伸びていくのが見える。
 const BATCH_MIN_LENGTH = 8;
 const BATCH_WAIT_MS = 1500;
-let pendingBatch = null; // { text, srcEl, dst, conf, timer }
+let pendingBatch = null; // { text, srcEl, dst, conf, direction, timer }
 
-function startBatch(text, conf) {
+function startBatch(text, conf, direction) {
   const dst = addTurn(text, conf, false);
   dst.className = "dst pending";
   dst.textContent = t("batchWaiting");
@@ -1098,41 +1024,32 @@ function startBatch(text, conf) {
     srcEl,
     dst,
     conf,
+    direction,
     timer: setTimeout(flushBatch, BATCH_WAIT_MS)
   };
 }
 
 function flushBatch() {
   if (!pendingBatch) return;
-  const { text, conf, dst } = pendingBatch;
+  const { text, direction, dst } = pendingBatch;
   clearTimeout(pendingBatch.timer);
   pendingBatch = null;
-  translateAndSend(text, conf, dst);
+  translateAndSend(text, direction, dst);
 }
 
-function translateAndSend(text, conf, dst) {
-  const key = el.apikey.value.trim();
+function translateAndSend(text, direction, dst) {
   const id = crypto.randomUUID();
 
   dst.className = "dst pending";
   dst.textContent = t("translating");
 
-  sendToPeer({ kind: "subtitle-final", id, text, direction: el.direction.value });
-
-  if (!key) {
-    dst.className = "dst failed";
-    dst.textContent = t("noKeyLocal");
-    sendToPeer({ kind: "subtitle-failed", id, reason: "no-key" });
-    return;
-  }
+  sendToPeer({ kind: "subtitle-final", id, text, direction });
 
   enqueue(async () => {
     try {
-      const out = await translate(text, conf, key);
+      const out = await translate(text, direction);
       dst.className = "dst";
       dst.textContent = out;
-      history.push({ src: text, dst: out });
-      if (history.length > 8) history.shift();
       sendToPeer({ kind: "subtitle-translated", id, text: out });
     } catch (err) {
       dst.className = "dst failed";
@@ -1144,7 +1061,8 @@ function translateAndSend(text, conf, dst) {
 }
 
 function handleFinal(text) {
-  const conf = LANGS[el.direction.value];
+  const direction = el.direction.value;
+  const conf = LANGS[direction];
 
   if (pendingBatch) {
     pendingBatch.text += text;
@@ -1156,12 +1074,12 @@ function handleFinal(text) {
   }
 
   if (text.length < BATCH_MIN_LENGTH) {
-    startBatch(text, conf);
+    startBatch(text, conf, direction);
     return;
   }
 
   const dst = addTurn(text, conf, false);
-  translateAndSend(text, conf, dst);
+  translateAndSend(text, direction, dst);
 }
 
 el.toggle.addEventListener("click", () => {
@@ -1200,8 +1118,6 @@ function applyI18n() {
   document.documentElement.lang = currentLang;
 
   el.roomInput.placeholder = t("roomPlaceholder");
-  el.apikey.placeholder = t("apiKeyPlaceholder");
-  el.saveKeyLabel.textContent = t("saveKeyLabel");
   el.createRoomBtn.textContent = t("createRoomBtn");
   el.inviteBtn.textContent = t("inviteBtn");
   el.connectBtn.textContent = t("connectBtn");

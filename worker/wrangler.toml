@@ -1,0 +1,6 @@
+name = "live-translate-translator"
+main = "index.js"
+compatibility_date = "2026-09-10"
+
+# AZURE_TRANSLATOR_KEY と AZURE_TRANSLATOR_REGION はコードに書かず、
+# `wrangler secret put` で登録する（README参照）。
