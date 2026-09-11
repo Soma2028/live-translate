@@ -62,6 +62,14 @@
 
   #uiLang { margin-left: auto; }
 
+  /* 通話前は#configGroupの中身がヘッダーに直接並んでいるかのように振る舞い、
+     通話中は歯車ボタンで丸ごと表示・非表示を切り替える。 */
+  #configGroup { display: contents; }
+  #configGroup[hidden] { display: none; }
+
+  #callTimer { font-variant-numeric: tabular-nums; color: var(--muted); }
+  #settingsBtn { margin-left: auto; }
+
   #shareLinkRow {
     padding: 6px 16px;
     border-bottom: 1px solid var(--line);
@@ -80,7 +88,11 @@
   #status.error { color: var(--warn); }
 
   #micMeter {
-    height: 3px;
+    flex: none;
+    width: 80px;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
     background: var(--line);
   }
   #micMeterFill {
@@ -216,22 +228,29 @@
 <body>
 
 <header>
-  <input type="text" id="roomInput" placeholder="合言葉（ルームID）" autocomplete="off">
-  <button id="createRoomBtn">部屋を作る</button>
-  <button id="inviteBtn">招待文をコピー</button>
+  <div id="configGroup">
+    <input type="text" id="roomInput" placeholder="合言葉（ルームID）" autocomplete="off">
+    <button id="createRoomBtn">部屋を作る</button>
+    <button id="inviteBtn">招待文をコピー</button>
+
+    <select id="direction">
+      <option id="dirOptJaKo" value="ja-ko">日本語 → 韓国語</option>
+      <option id="dirOptKoJa" value="ko-ja">韓国語 → 日本語</option>
+    </select>
+
+    <select id="uiLang">
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+    </select>
+  </div>
+
   <button id="connectBtn">つなぐ</button>
-  <button id="hangupBtn" class="hangup" disabled>切る</button>
 
-  <select id="direction">
-    <option id="dirOptJaKo" value="ja-ko">日本語 → 韓国語</option>
-    <option id="dirOptKoJa" value="ko-ja">韓国語 → 日本語</option>
-  </select>
-  <button id="toggle">開始</button>
-
-  <select id="uiLang">
-    <option value="ja">日本語</option>
-    <option value="ko">한국어</option>
-  </select>
+  <span id="callTimer" hidden>00:00</span>
+  <div id="micMeter" hidden><div id="micMeterFill"></div></div>
+  <button id="toggle" hidden>開始</button>
+  <button id="hangupBtn" class="hangup" hidden disabled>切る</button>
+  <button id="settingsBtn" type="button" hidden>⚙</button>
 </header>
 
 <div id="shareLinkRow" hidden>
@@ -239,7 +258,6 @@
 </div>
 
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
-<div id="micMeter"><div id="micMeterFill"></div></div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
 <div id="usageInfo">今月 0 / 2,000,000 文字</div>
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
@@ -248,7 +266,7 @@
   <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
 </main>
 
-<p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。APIキーは「このブラウザに保存する」を選ばない限りこのページを閉じると消えます。</p>
+<p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。</p>
 
 <audio id="remoteAudio" autoplay></audio>
 
@@ -298,6 +316,7 @@ const I18N = {
     roomPlaceholder: "合言葉（ルームID）",
     createRoomBtn: "部屋を作る",
     inviteBtn: "招待文をコピー",
+    settingsBtn: "設定",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -331,7 +350,8 @@ const I18N = {
     sttUnsupported: "この端末では音声認識が使えません。Chrome か Edge で開いてください。",
     noMic: "マイクが見つかりません。接続を確認してください。",
     cannotStart: "開始できません。一度停止してから押し直してください。",
-    logEmpty: "「つなぐ」で通話、「開始」で自分の字幕が出ます。",
+    logEmptyPrecall: "リンクを送って、相手が参加するのを待ちましょう。",
+    logEmptyIncall: "「開始」を押して話すと、ここに字幕が出ます。",
     hint: "自分のマイクだけを認識します。相手の声は認識しません。",
     translating: "翻訳中…",
     translateFailed: "翻訳できませんでした（{detail}）",
@@ -355,6 +375,7 @@ const I18N = {
     roomPlaceholder: "비밀번호(방 ID)",
     createRoomBtn: "방 만들기",
     inviteBtn: "초대 문구 복사",
+    settingsBtn: "설정",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -388,7 +409,8 @@ const I18N = {
     sttUnsupported: "이 기기에서는 음성 인식을 사용할 수 없습니다. Chrome이나 Edge에서 열어주세요.",
     noMic: "마이크를 찾을 수 없습니다. 연결을 확인해주세요.",
     cannotStart: "시작할 수 없습니다. 한 번 정지한 후 다시 눌러주세요.",
-    logEmpty: "[연결]로 통화, [시작]으로 자막이 나옵니다.",
+    logEmptyPrecall: "링크를 보내고 상대방이 참여하기를 기다리세요.",
+    logEmptyIncall: "[시작]을 누르고 말하면 여기에 자막이 나옵니다.",
     hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다.",
     translating: "번역 중…",
     translateFailed: "번역하지 못했습니다 ({detail})",
@@ -430,13 +452,16 @@ function stateLabel(state) {
 }
 
 const el = {
+  configGroup: document.getElementById("configGroup"),
   roomInput: document.getElementById("roomInput"),
   createRoomBtn: document.getElementById("createRoomBtn"),
   inviteBtn: document.getElementById("inviteBtn"),
   shareLinkRow: document.getElementById("shareLinkRow"),
   shareLinkInput: document.getElementById("shareLinkInput"),
   connectBtn: document.getElementById("connectBtn"),
+  callTimer: document.getElementById("callTimer"),
   hangupBtn: document.getElementById("hangupBtn"),
+  settingsBtn: document.getElementById("settingsBtn"),
   direction: document.getElementById("direction"),
   dirOptJaKo: document.getElementById("dirOptJaKo"),
   dirOptKoJa: document.getElementById("dirOptKoJa"),
@@ -444,6 +469,7 @@ const el = {
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
+  micMeter: document.getElementById("micMeter"),
   micMeterFill: document.getElementById("micMeterFill"),
   usageInfo: document.getElementById("usageInfo"),
   sttStatus: document.getElementById("sttStatus"),
@@ -451,6 +477,9 @@ const el = {
   hint: document.getElementById("hint"),
   remoteAudio: document.getElementById("remoteAudio")
 };
+
+// デバッグ情報（役割・ICE状態・STT再接続回数）は?debug=1のときだけ表示する。
+el.callInfo.hidden = !DEBUG;
 
 /* ---------- ステータス表示 ---------- */
 /* 表示中の状態をkey+paramsで保持しておき、言語切替時に
@@ -591,6 +620,64 @@ function stateClass(state) {
   return "";
 }
 
+/* ---------- 画面の状態: 接続前 / 通話中 ---------- */
+/* 接続前は設定一式（合言葉・部屋を作る・招待文・言語・翻訳方向）を
+   ヘッダーにそのまま並べる。通話中はヘッダーを最小限にし、設定一式は
+   歯車ボタンで開閉する折りたたみパネル扱いにする。                  */
+
+let uiPhase = "precall"; // "precall" | "incall"
+let settingsOpen = false;
+
+function updatePhaseUI() {
+  const inCall = uiPhase === "incall";
+
+  el.configGroup.hidden = inCall && !settingsOpen;
+  el.connectBtn.hidden = inCall;
+
+  el.callTimer.hidden = !inCall;
+  el.micMeter.hidden = !inCall;
+  el.toggle.hidden = !inCall;
+  el.hangupBtn.hidden = !inCall;
+  el.settingsBtn.hidden = !inCall;
+
+  if (inCall) {
+    el.shareLinkRow.hidden = true;
+  }
+
+  updateLogPlaceholder();
+}
+
+el.settingsBtn.addEventListener("click", () => {
+  settingsOpen = !settingsOpen;
+  updatePhaseUI();
+});
+
+/* ---------- 通話時間の表示 ---------- */
+
+let callTimerInterval = null;
+let callStartTimestamp = null;
+
+function updateCallTimerDisplay() {
+  const elapsed = Math.floor((Date.now() - callStartTimestamp) / 1000);
+  const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const ss = String(elapsed % 60).padStart(2, "0");
+  el.callTimer.textContent = `${mm}:${ss}`;
+}
+
+function startCallTimer() {
+  if (callTimerInterval) return; // 既に計測中なら何もしない
+  callStartTimestamp = Date.now();
+  callTimerInterval = setInterval(updateCallTimerDisplay, 1000);
+  updateCallTimerDisplay();
+}
+
+function stopCallTimer() {
+  clearInterval(callTimerInterval);
+  callTimerInterval = null;
+  callStartTimestamp = null;
+  el.callTimer.textContent = "00:00";
+}
+
 function resetUI() {
   el.connectBtn.disabled = false;
   el.roomInput.disabled = false;
@@ -603,6 +690,11 @@ function resetUI() {
   peerJoined = false;
   updateCallInfo();
   el.remoteAudio.srcObject = null;
+
+  uiPhase = "precall";
+  settingsOpen = false;
+  updatePhaseUI();
+  stopCallTimer();
 }
 
 /* ---------- マイク音量メーター ---------- */
@@ -764,6 +856,9 @@ async function connect() {
   }
   roomId = inputId;
 
+  uiPhase = "incall";
+  updatePhaseUI();
+
   el.connectBtn.disabled = true;
   el.roomInput.disabled = true;
   el.createRoomBtn.disabled = true;
@@ -818,6 +913,9 @@ async function connect() {
       updateCallInfo();
       setStatus("connStateMsg", { state: stateLabel(pc.connectionState) }, stateClass(pc.connectionState));
 
+      if (connState === "connected") {
+        startCallTimer();
+      }
       if (connState === "disconnected" || connState === "failed" || connState === "closed") {
         markPeerLeft();
       }
@@ -1570,14 +1668,20 @@ function applyI18n() {
   el.dirOptJaKo.textContent = t("directionJaKo");
   el.dirOptKoJa.textContent = t("directionKoJa");
   el.hint.textContent = t("hint");
+  el.settingsBtn.setAttribute("aria-label", t("settingsBtn"));
+  el.settingsBtn.title = t("settingsBtn");
 
-  const emptyEl = el.log.querySelector(".empty");
-  if (emptyEl) emptyEl.textContent = t("logEmpty");
-
+  updateLogPlaceholder();
   renderStatus();
   renderSttStatus();
   updateCallInfo();
   updateCharUsageDisplay();
+}
+
+function updateLogPlaceholder() {
+  const emptyEl = el.log.querySelector(".empty");
+  if (!emptyEl) return;
+  emptyEl.textContent = t(uiPhase === "incall" ? "logEmptyIncall" : "logEmptyPrecall");
 }
 
 el.uiLang.addEventListener("change", () => {
@@ -1586,6 +1690,7 @@ el.uiLang.addEventListener("change", () => {
   applyI18n();
 });
 
+updatePhaseUI();
 applyI18n();
 </script>
 </body>
