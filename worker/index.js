@@ -1,7 +1,7 @@
 // call.html からの翻訳リクエストを中継するWorker。
 // 主経路と、失敗時に自動で使われるフォールバックはこのフラグで決まる。
 // "azure" か "workers-ai" を指定する。逆側のコードは消さずに残してある。
-const PRIMARY_ENGINE = "azure";
+const PRIMARY_ENGINE = "workers-ai";
 
 const ALLOWED_ORIGINS = new Set([
   "https://soma2028.github.io",
@@ -59,12 +59,22 @@ function buildSystemPrompt(from, to) {
   const toName = LANG_NAMES_JA[to] || to;
 
   let toneNote = "";
-  if (to === "ko") toneNote = "존댓말ではなく반말（タメ口）で、";
-  else if (to === "ja") toneNote = "です・ます調ではなくタメ口で、";
+  if (to === "ko") {
+    toneNote =
+      "존댓말ではなく반말（タメ口）で訳すこと。文語的な表現や過度な敬語は避けること。\n" +
+      "主語は、韓国語として自然に省略できる場面では省くこと。\n" +
+      "相槌やフィラーは直訳せず、自然な韓国語の相槌（어、그니까、아 진짜 など）に置き換えること。";
+  } else if (to === "ja") {
+    toneNote =
+      "です・ます調ではなくタメ口で訳すこと。文語的な表現や過度な敬語は避けること。\n" +
+      "主語は、日本語として自然に省略できる場面では省くこと。\n" +
+      "相槌やフィラーは直訳せず、自然な日本語の相槌（え、そうそう、マジで など）に置き換えること。";
+  }
 
   return (
-    `あなたは友人同士の会話を訳す通訳です。次の${fromName}の発話を${toName}に訳してください。\n` +
-    `親しい友人同士のくだけた会話なので、${toneNote}話し言葉として自然な口語にすること。\n` +
+    `あなたは20代の友人同士による、くだけた電話の会話を訳す通訳です。\n` +
+    `次の${fromName}の発話を${toName}に訳してください。\n` +
+    `${toneNote}\n` +
     `訳文だけを出力し、説明・引用符・原文は付けないこと。`
   );
 }
