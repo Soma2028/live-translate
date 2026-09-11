@@ -90,6 +90,10 @@ async function translateWithWorkersAI(env, text, from, to) {
     temperature: 0.3
   });
 
+  // 一時デバッグ: env.AI.run()の戻り値の実際の構造を確認するため。
+  // 原因が分かったら削除する。
+  console.log("Workers AI raw result:", JSON.stringify(result));
+
   const translated = result?.response?.trim();
   if (!translated) throw new Error("Workers AIから空の応答");
   return translated;
