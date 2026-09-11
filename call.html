@@ -79,6 +79,16 @@
   #status.live { color: var(--ko); }
   #status.error { color: var(--warn); }
 
+  #micMeter {
+    height: 3px;
+    background: var(--line);
+  }
+  #micMeterFill {
+    height: 100%;
+    width: 0%;
+    background: var(--ko);
+  }
+
   #callInfo {
     font-size: 12px;
     color: var(--muted);
@@ -229,6 +239,7 @@
 </div>
 
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
+<div id="micMeter"><div id="micMeterFill"></div></div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
 <div id="usageInfo">今月 0 / 2,000,000 文字</div>
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
@@ -433,6 +444,7 @@ const el = {
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
+  micMeterFill: document.getElementById("micMeterFill"),
   usageInfo: document.getElementById("usageInfo"),
   sttStatus: document.getElementById("sttStatus"),
   log: document.getElementById("log"),
@@ -593,6 +605,68 @@ function resetUI() {
   el.remoteAudio.srcObject = null;
 }
 
+/* ---------- マイク音量メーター ---------- */
+/* getUserMediaのストリームをAnalyserNodeに通し、requestAnimationFrameで
+   細いバーの幅を更新するだけ。音声そのものはどこにも出力しない
+   （destinationにつながないので、自分の声がスピーカーに返ることはない）。 */
+
+let micAudioContext = null;
+let micAnalyser = null;
+let micDataArray = null;
+let micMeterRAF = null;
+
+function startMicMeter(stream) {
+  try {
+    micAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (micAudioContext.state === "suspended") {
+      micAudioContext.resume().catch(() => {});
+    }
+
+    const source = micAudioContext.createMediaStreamSource(stream);
+    micAnalyser = micAudioContext.createAnalyser();
+    micAnalyser.fftSize = 256;
+    micAnalyser.smoothingTimeConstant = 0.6;
+    source.connect(micAnalyser);
+
+    micDataArray = new Uint8Array(micAnalyser.frequencyBinCount);
+    tickMicMeter();
+  } catch {
+    // AudioContextが使えない環境でも通話自体は続けたいので、メーターだけ諦める。
+  }
+}
+
+function tickMicMeter() {
+  if (!micAnalyser) return;
+
+  micAnalyser.getByteTimeDomainData(micDataArray);
+
+  let sumSquares = 0;
+  for (let i = 0; i < micDataArray.length; i++) {
+    const v = (micDataArray[i] - 128) / 128;
+    sumSquares += v * v;
+  }
+  const rms = Math.sqrt(sumSquares / micDataArray.length);
+  const level = Math.min(1, rms * 4); // 声を出したときに反応しやすいよう感度を上げる
+
+  el.micMeterFill.style.width = `${Math.round(level * 100)}%`;
+
+  micMeterRAF = requestAnimationFrame(tickMicMeter);
+}
+
+function stopMicMeter() {
+  if (micMeterRAF) {
+    cancelAnimationFrame(micMeterRAF);
+    micMeterRAF = null;
+  }
+  if (micAudioContext) {
+    micAudioContext.close().catch(() => {});
+    micAudioContext = null;
+  }
+  micAnalyser = null;
+  micDataArray = null;
+  el.micMeterFill.style.width = "0%";
+}
+
 function markPeerJoined() {
   if (peerJoined) return;
   peerJoined = true;
@@ -701,6 +775,7 @@ async function connect() {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: false
     });
+    startMicMeter(localStream);
   } catch (err) {
     setError("micDenied");
     resetUI();
@@ -715,6 +790,7 @@ async function connect() {
 
     if (roomData && roomData.offer && roomData.answer) {
       setError("alreadyTwo");
+      stopMicMeter();
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
       resetUI();
@@ -824,6 +900,7 @@ async function connect() {
     }
     if (roomDisconnect) { roomDisconnect.cancel().catch(() => {}); roomDisconnect = null; }
     if (pc) { pc.close(); pc = null; }
+    stopMicMeter();
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     resetUI();
   }
@@ -863,6 +940,7 @@ async function hangup() {
     pc.close();
     pc = null;
   }
+  stopMicMeter();
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
     localStream = null;
