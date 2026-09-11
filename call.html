@@ -117,6 +117,14 @@
     background: var(--surface);
   }
 
+  #lastCallInfo {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
   #sttStatus {
     font-size: 13px;
     color: var(--muted);
@@ -258,6 +266,7 @@
 </div>
 
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
+<div id="lastCallInfo" hidden></div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
 <div id="usageInfo">今月 0 / 2,000,000 文字</div>
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
@@ -359,6 +368,7 @@ const I18N = {
     peerTranslateFailed: "相手側で翻訳に失敗しました",
     deleteTurn: "この発言を削除",
     usageTemplate: "今月 {used} / {limit} 文字",
+    lastCallTemplate: "前回の通話: {minutes}分、STT再接続 {restarts}回",
     peerJoined: "相手が参加しました",
     peerLeft: "相手が退出しました",
     batchWaiting: "…",
@@ -418,6 +428,7 @@ const I18N = {
     peerTranslateFailed: "상대방 쪽에서 번역에 실패했습니다",
     deleteTurn: "이 발언 삭제",
     usageTemplate: "이번 달 {used} / {limit}자",
+    lastCallTemplate: "지난 통화: {minutes}분, STT 재접속 {restarts}회",
     peerJoined: "상대방이 참여했습니다",
     peerLeft: "상대방이 나갔습니다",
     batchWaiting: "…",
@@ -469,6 +480,7 @@ const el = {
   uiLang: document.getElementById("uiLang"),
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
+  lastCallInfo: document.getElementById("lastCallInfo"),
   micMeter: document.getElementById("micMeter"),
   micMeterFill: document.getElementById("micMeterFill"),
   usageInfo: document.getElementById("usageInfo"),
@@ -645,6 +657,7 @@ function updatePhaseUI() {
   }
 
   updateLogPlaceholder();
+  updateLastCallDisplay();
 }
 
 el.settingsBtn.addEventListener("click", () => {
@@ -671,11 +684,32 @@ function startCallTimer() {
   updateCallTimerDisplay();
 }
 
+// 通話を切ったあと、接続前の画面で参照できるようにするための直前の通話の記録。
+let lastCallSummary = null; // { durationSec, restarts } | null
+
 function stopCallTimer() {
+  if (callStartTimestamp) {
+    lastCallSummary = {
+      durationSec: Math.floor((Date.now() - callStartTimestamp) / 1000),
+      restarts: sttRestartCount
+    };
+  }
   clearInterval(callTimerInterval);
   callTimerInterval = null;
   callStartTimestamp = null;
   el.callTimer.textContent = "00:00";
+}
+
+function updateLastCallDisplay() {
+  if (!lastCallSummary || uiPhase !== "precall") {
+    el.lastCallInfo.hidden = true;
+    return;
+  }
+  el.lastCallInfo.textContent = t("lastCallTemplate", {
+    minutes: Math.round(lastCallSummary.durationSec / 60),
+    restarts: lastCallSummary.restarts
+  });
+  el.lastCallInfo.hidden = false;
 }
 
 function resetUI() {
@@ -691,10 +725,10 @@ function resetUI() {
   updateCallInfo();
   el.remoteAudio.srcObject = null;
 
+  stopCallTimer();
   uiPhase = "precall";
   settingsOpen = false;
   updatePhaseUI();
-  stopCallTimer();
 }
 
 /* ---------- マイク音量メーター ---------- */
@@ -1012,6 +1046,16 @@ function isPermissionDenied(err) {
 }
 
 async function hangup() {
+  // STTの開始/停止ボタンは通話中だけ表示されるので、通話を切ったときに
+  // 動いたままだと次に止める手段がなくなってしまう。ここで止めておく。
+  if (stt && stt.running) {
+    stt.stop();
+    stt = null;
+    el.toggle.textContent = t("startBtn");
+    el.toggle.classList.remove("stop");
+    el.direction.disabled = false;
+  }
+
   if (answerRef) { off(answerRef); answerRef = null; }
   if (offerCandidatesRef) { off(offerCandidatesRef); offerCandidatesRef = null; }
   if (answerCandidatesRef) { off(answerCandidatesRef); answerCandidatesRef = null; }
@@ -1683,6 +1727,7 @@ function applyI18n() {
   renderSttStatus();
   updateCallInfo();
   updateCharUsageDisplay();
+  updateLastCallDisplay();
 }
 
 function updateLogPlaceholder() {
