@@ -1129,6 +1129,13 @@ const sharedParams = new URLSearchParams(location.search);
 const sharedRoomId = sharedParams.get("room");
 if (sharedRoomId) {
   el.roomInput.value = sharedRoomId;
+
+  // 招待リンクで開いた側は、部屋の作成・招待関連の操作を隠し、
+  // 合言葉もすでに決まっているので編集できないようにする。
+  // 「つなぐ」を押すだけで済む状態にする。
+  el.createRoomBtn.hidden = true;
+  el.inviteBtn.hidden = true;
+  el.roomInput.hidden = true;
 }
 
 const sharedLang = sharedParams.get("lang");
