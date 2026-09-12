@@ -249,6 +249,65 @@
   }
   #interim:empty { display: none; }
   .hint { font-size: 12px; color: var(--muted); padding: 0 16px 10px; }
+
+  #logViewDialog {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0;
+    width: min(560px, 92vw);
+    max-height: 80vh;
+    color: var(--ink);
+    background: var(--surface);
+  }
+  #logViewDialog::backdrop { background: rgba(0, 0, 0, .35); }
+  #logDialogHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  #logDialogCloseBtn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
+  #logDialogBody {
+    padding: 10px 14px;
+    overflow-y: auto;
+    max-height: calc(80vh - 108px);
+  }
+  #logDialogFooter {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  #logDialogFooter button { font-size: 13px; }
+  .log-day { margin-bottom: 18px; }
+  .log-day:last-child { margin-bottom: 0; }
+  .log-day-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .log-day-header strong { font-size: 13px; }
+  .log-day-header button {
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  .log-entry {
+    font-size: 13px;
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -270,6 +329,7 @@
     </select>
 
     <button id="soundToggleBtn" type="button">効果音: オン</button>
+    <button id="viewLogBtn" type="button">ログを表示</button>
   </div>
 
   <button id="connectBtn">つなぐ</button>
@@ -281,6 +341,18 @@
   <button id="hangupBtn" class="hangup" hidden disabled>切る</button>
   <button id="settingsBtn" type="button" hidden>⚙</button>
 </header>
+
+<dialog id="logViewDialog">
+  <div id="logDialogHeader">
+    <strong id="logDialogTitle">通話ログ</strong>
+    <button id="logDialogCloseBtn" type="button">×</button>
+  </div>
+  <div id="logDialogBody"></div>
+  <div id="logDialogFooter">
+    <button id="logCopyAllBtn" type="button">すべてコピー</button>
+    <button id="logDeleteAllBtn" type="button">すべて削除</button>
+  </div>
+</dialog>
 
 <div id="shareLinkRow" hidden>
   <input type="text" id="shareLinkInput" readonly>
@@ -349,6 +421,19 @@ const I18N = {
     settingsBtn: "設定",
     soundOn: "効果音: オン",
     soundOff: "効果音: オフ",
+    viewLogBtn: "ログを表示",
+    logDialogTitle: "通話ログ",
+    logCopyDay: "コピー",
+    logDeleteDay: "削除",
+    logCopyAllBtn: "すべてコピー",
+    logDeleteAllBtn: "すべて削除",
+    logViewEmpty: "まだログがありません。",
+    logSpeakerOwn: "自分",
+    logSpeakerPeer: "相手",
+    logDeleteDayConfirm: "{date}のログを削除しますか？",
+    logDeleteAllConfirm: "すべてのログを削除しますか？元に戻せません。",
+    logCopied: "コピーしました",
+    logCopyFailed: "コピー失敗",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -412,6 +497,19 @@ const I18N = {
     settingsBtn: "설정",
     soundOn: "효과음: 켜짐",
     soundOff: "효과음: 꺼짐",
+    viewLogBtn: "로그 보기",
+    logDialogTitle: "통화 로그",
+    logCopyDay: "복사",
+    logDeleteDay: "삭제",
+    logCopyAllBtn: "전체 복사",
+    logDeleteAllBtn: "전체 삭제",
+    logViewEmpty: "아직 로그가 없습니다.",
+    logSpeakerOwn: "나",
+    logSpeakerPeer: "상대방",
+    logDeleteDayConfirm: "{date} 로그를 삭제할까요?",
+    logDeleteAllConfirm: "모든 로그를 삭제할까요? 되돌릴 수 없습니다.",
+    logCopied: "복사했습니다",
+    logCopyFailed: "복사 실패",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -501,6 +599,13 @@ const el = {
   hangupBtn: document.getElementById("hangupBtn"),
   settingsBtn: document.getElementById("settingsBtn"),
   soundToggleBtn: document.getElementById("soundToggleBtn"),
+  viewLogBtn: document.getElementById("viewLogBtn"),
+  logViewDialog: document.getElementById("logViewDialog"),
+  logDialogTitle: document.getElementById("logDialogTitle"),
+  logDialogCloseBtn: document.getElementById("logDialogCloseBtn"),
+  logDialogBody: document.getElementById("logDialogBody"),
+  logCopyAllBtn: document.getElementById("logCopyAllBtn"),
+  logDeleteAllBtn: document.getElementById("logDeleteAllBtn"),
   direction: document.getElementById("direction"),
   dirOptJaKo: document.getElementById("dirOptJaKo"),
   dirOptKoJa: document.getElementById("dirOptKoJa"),
@@ -913,6 +1018,214 @@ el.soundToggleBtn.addEventListener("click", () => {
   updateSoundToggleButton();
 });
 
+/* ---------- 通話ログ ---------- */
+/* 字幕（原文・訳文・話者・時刻）を日付ごとにlocalStorageへ記録する。
+   30日より古い日付は書き込みのたびに自動で消し、それでも容量が
+   厳しければ古い日付から間引く。ライブの字幕を×/Escで消したときは
+   ログからも同じidのエントリを消す（消したはずのものが記録に残らないように）。 */
+
+const CALL_LOG_STORAGE = "liveTranslateCallLog";
+const CALL_LOG_MAX_DAYS = 30;
+const CALL_LOG_SOFT_LIMIT_CHARS = 4_000_000; // 目安。ブラウザのlocalStorage上限に近づく前に間引く
+
+function localDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function loadCallLog() {
+  try {
+    return JSON.parse(localStorage.getItem(CALL_LOG_STORAGE)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function pruneExpiredLogDays(log) {
+  const cutoff = Date.now() - CALL_LOG_MAX_DAYS * 24 * 60 * 60 * 1000;
+  for (const dateKey of Object.keys(log)) {
+    const dayTime = new Date(`${dateKey}T00:00:00`).getTime();
+    if (Number.isNaN(dayTime) || dayTime < cutoff) delete log[dateKey];
+  }
+}
+
+function persistCallLog(log) {
+  pruneExpiredLogDays(log);
+
+  let serialized = JSON.stringify(log);
+  while (serialized.length > CALL_LOG_SOFT_LIMIT_CHARS) {
+    const oldestDateKey = Object.keys(log).sort()[0];
+    if (!oldestDateKey) break;
+    delete log[oldestDateKey];
+    serialized = JSON.stringify(log);
+  }
+
+  while (true) {
+    try {
+      localStorage.setItem(CALL_LOG_STORAGE, serialized);
+      return;
+    } catch {
+      // QuotaExceededError等。容量が上限に近い/超えているので、
+      // 古い日付から削除して入るところまで小さくする。
+      const oldestDateKey = Object.keys(log).sort()[0];
+      if (!oldestDateKey) return;
+      delete log[oldestDateKey];
+      serialized = JSON.stringify(log);
+    }
+  }
+}
+
+function logSubtitle(id, speaker, src, dst) {
+  const log = loadCallLog();
+  const dateKey = localDateKey();
+  if (!log[dateKey]) log[dateKey] = [];
+
+  const entries = log[dateKey];
+  const existingIndex = entries.findIndex(e => e.id === id);
+  const entry = { id, time: Date.now(), speaker, src, dst };
+  if (existingIndex >= 0) {
+    entries[existingIndex] = entry;
+  } else {
+    entries.push(entry);
+  }
+
+  persistCallLog(log);
+}
+
+function deleteLogEntry(id) {
+  const log = loadCallLog();
+  let changed = false;
+  for (const dateKey of Object.keys(log)) {
+    const idx = log[dateKey].findIndex(e => e.id === id);
+    if (idx >= 0) {
+      log[dateKey].splice(idx, 1);
+      if (log[dateKey].length === 0) delete log[dateKey];
+      changed = true;
+      break;
+    }
+  }
+  if (changed) persistCallLog(log);
+}
+
+function formatLogDayAsText(dateKey, entries) {
+  const locale = currentLang === "ko" ? "ko-KR" : "ja-JP";
+  const lines = entries.map(e => {
+    const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
+    return `${time} ${speakerLabel}: ${e.src} → ${e.dst}`;
+  });
+  return `[${dateKey}]\n${lines.join("\n")}`;
+}
+
+function renderLogDialog() {
+  const log = loadCallLog();
+  const dateKeys = Object.keys(log).sort().reverse();
+
+  el.logDialogBody.innerHTML = "";
+
+  if (dateKeys.length === 0) {
+    const emptyEl = document.createElement("p");
+    emptyEl.className = "log-empty";
+    emptyEl.textContent = t("logViewEmpty");
+    el.logDialogBody.appendChild(emptyEl);
+    return;
+  }
+
+  const locale = currentLang === "ko" ? "ko-KR" : "ja-JP";
+
+  for (const dateKey of dateKeys) {
+    const entries = log[dateKey];
+
+    const dayEl = document.createElement("div");
+    dayEl.className = "log-day";
+
+    const headerEl = document.createElement("div");
+    headerEl.className = "log-day-header";
+
+    const titleEl = document.createElement("strong");
+    titleEl.textContent = dateKey;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = t("logCopyDay");
+    copyBtn.addEventListener("click", () => copyLogDay(dateKey, copyBtn));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = t("logDeleteDay");
+    deleteBtn.addEventListener("click", () => {
+      if (!confirm(t("logDeleteDayConfirm", { date: dateKey }))) return;
+      const currentLog = loadCallLog();
+      delete currentLog[dateKey];
+      persistCallLog(currentLog);
+      renderLogDialog();
+    });
+
+    headerEl.append(titleEl, copyBtn, deleteBtn);
+    dayEl.appendChild(headerEl);
+
+    const entriesEl = document.createElement("div");
+    entriesEl.className = "log-day-entries";
+
+    for (const e of entries) {
+      const entryEl = document.createElement("div");
+      entryEl.className = "log-entry";
+      const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+      const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
+      entryEl.textContent = `${time} ${speakerLabel}: ${e.src} → ${e.dst}`;
+      entriesEl.appendChild(entryEl);
+    }
+
+    dayEl.appendChild(entriesEl);
+    el.logDialogBody.appendChild(dayEl);
+  }
+}
+
+async function copyLogDay(dateKey, buttonEl) {
+  const log = loadCallLog();
+  const entries = log[dateKey];
+  if (!entries) return;
+  const text = formatLogDayAsText(dateKey, entries);
+  const original = buttonEl.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    buttonEl.textContent = t("logCopied");
+  } catch {
+    buttonEl.textContent = t("logCopyFailed");
+  }
+  setTimeout(() => { buttonEl.textContent = original; }, 1500);
+}
+
+el.viewLogBtn.addEventListener("click", () => {
+  renderLogDialog();
+  el.logViewDialog.showModal();
+});
+
+el.logDialogCloseBtn.addEventListener("click", () => {
+  el.logViewDialog.close();
+});
+
+el.logCopyAllBtn.addEventListener("click", async () => {
+  const log = loadCallLog();
+  const dateKeys = Object.keys(log).sort().reverse();
+  const text = dateKeys.map(dateKey => formatLogDayAsText(dateKey, log[dateKey])).join("\n\n");
+  const original = el.logCopyAllBtn.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    el.logCopyAllBtn.textContent = t("logCopied");
+  } catch {
+    el.logCopyAllBtn.textContent = t("logCopyFailed");
+  }
+  setTimeout(() => { el.logCopyAllBtn.textContent = original; }, 1500);
+});
+
+el.logDeleteAllBtn.addEventListener("click", () => {
+  if (!confirm(t("logDeleteAllConfirm"))) return;
+  try {
+    localStorage.removeItem(CALL_LOG_STORAGE);
+  } catch {}
+  renderLogDialog();
+});
+
 function markPeerJoined() {
   if (peerJoined) return;
   peerJoined = true;
@@ -989,16 +1302,21 @@ function handlePeerMessage(msg) {
     entry.dst.className = "dst";
     entry.dst.textContent = msg.text;
     el.log.scrollTop = el.log.scrollHeight;
+    const srcEl = entry.dst.previousElementSibling;
+    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", msg.text);
   } else if (msg.kind === "subtitle-failed") {
     const entry = peerPending.get(msg.id);
     if (!entry) return;
     entry.dst.className = "dst failed";
     entry.dst.textContent = t("peerTranslateFailed");
+    const srcEl = entry.dst.previousElementSibling;
+    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", entry.dst.textContent);
   } else if (msg.kind === "subtitle-delete") {
     const entry = peerPending.get(msg.id);
     if (!entry) return;
     entry.dst.closest(".turn")?.remove();
     peerPending.delete(msg.id);
+    deleteLogEntry(msg.id);
   } else if (msg.kind === "mic-level") {
     peerMicLevelLastReceived = Date.now();
     el.peerMicMeter.classList.remove("unknown");
@@ -1696,10 +2014,12 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
       dst.className = "dst";
       dst.textContent = out;
       sendToPeer({ kind: "subtitle-translated", id, text: out });
+      logSubtitle(id, "own", text, out);
     } catch (err) {
       dst.className = "dst failed";
       dst.textContent = t("translateFailed", { detail: formatErrorDetail(err.message) });
       sendToPeer({ kind: "subtitle-failed", id, reason: "error" });
+      logSubtitle(id, "own", text, dst.textContent);
     }
     el.log.scrollTop = el.log.scrollHeight;
   });
@@ -1726,6 +2046,7 @@ function deleteOwnTurn(turn) {
 
   if (id) {
     sendToPeer({ kind: "subtitle-delete", id });
+    deleteLogEntry(id);
   }
 }
 
@@ -1733,6 +2054,7 @@ function deleteOwnTurn(turn) {
 // 入力欄にフォーカスがあるときはEscの本来の動作（フォーカス解除など）を優先する。
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (el.logViewDialog.open) return; // ログダイアログはネイティブの閉じる動作に任せる
 
   const active = document.activeElement;
   if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
@@ -1878,6 +2200,10 @@ function applyI18n() {
   updateHintText();
   el.settingsBtn.setAttribute("aria-label", t("settingsBtn"));
   el.settingsBtn.title = t("settingsBtn");
+  el.viewLogBtn.textContent = t("viewLogBtn");
+  el.logDialogTitle.textContent = t("logDialogTitle");
+  el.logCopyAllBtn.textContent = t("logCopyAllBtn");
+  el.logDeleteAllBtn.textContent = t("logDeleteAllBtn");
 
   updateLogPlaceholder();
   renderStatus();
@@ -1886,6 +2212,7 @@ function applyI18n() {
   updateCharUsageDisplay();
   updateLastCallDisplay();
   updateSoundToggleButton();
+  if (el.logViewDialog.open) renderLogDialog();
 }
 
 function updateLogPlaceholder() {
