@@ -17,6 +17,7 @@
     --ja: #2f5d8c;
     --ko: #2f6b4f;
     --warn: #9c3b25;
+    --subtitle-scale: 1;
   }
   * { box-sizing: border-box; }
   body {
@@ -221,10 +222,12 @@
     font-weight: 700;
   }
   .turn-body { flex: 1; min-width: 0; }
-  .src { font-size: 14px; color: var(--muted); }
-  .dst { font-size: 22px; font-weight: 500; margin-top: 4px; }
-  .dst.pending { color: var(--muted); font-weight: 400; font-size: 16px; }
-  .dst.failed { color: var(--warn); font-size: 15px; font-weight: 400; }
+  /* 字幕の文字サイズ。--subtitle-scaleを掛けるだけで、原文/訳文/状態表示の
+     比率はそのまま拡大縮小される（既定の1が今までと同じ大きさ）。 */
+  .src { font-size: calc(14px * var(--subtitle-scale)); color: var(--muted); }
+  .dst { font-size: calc(22px * var(--subtitle-scale)); font-weight: 500; margin-top: 4px; }
+  .dst.pending { color: var(--muted); font-weight: 400; font-size: calc(16px * var(--subtitle-scale)); }
+  .dst.failed { color: var(--warn); font-size: calc(15px * var(--subtitle-scale)); font-weight: 400; }
 
   .system-msg {
     align-self: center;
@@ -330,6 +333,12 @@
 
     <button id="soundToggleBtn" type="button">効果音: オン</button>
     <button id="viewLogBtn" type="button">ログを表示</button>
+
+    <select id="fontSizeSelect">
+      <option id="fontSizeOptSmall" value="small">小</option>
+      <option id="fontSizeOptMedium" value="medium" selected>中</option>
+      <option id="fontSizeOptLarge" value="large">大</option>
+    </select>
   </div>
 
   <button id="connectBtn">つなぐ</button>
@@ -463,6 +472,9 @@ const I18N = {
     logDeleteAllConfirm: "すべてのログを削除しますか？元に戻せません。",
     logCopied: "コピーしました",
     logCopyFailed: "コピー失敗",
+    fontSizeSmall: "小",
+    fontSizeMedium: "中",
+    fontSizeLarge: "大",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -539,6 +551,9 @@ const I18N = {
     logDeleteAllConfirm: "모든 로그를 삭제할까요? 되돌릴 수 없습니다.",
     logCopied: "복사했습니다",
     logCopyFailed: "복사 실패",
+    fontSizeSmall: "작게",
+    fontSizeMedium: "보통",
+    fontSizeLarge: "크게",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -629,6 +644,10 @@ const el = {
   settingsBtn: document.getElementById("settingsBtn"),
   soundToggleBtn: document.getElementById("soundToggleBtn"),
   viewLogBtn: document.getElementById("viewLogBtn"),
+  fontSizeSelect: document.getElementById("fontSizeSelect"),
+  fontSizeOptSmall: document.getElementById("fontSizeOptSmall"),
+  fontSizeOptMedium: document.getElementById("fontSizeOptMedium"),
+  fontSizeOptLarge: document.getElementById("fontSizeOptLarge"),
   logViewDialog: document.getElementById("logViewDialog"),
   logDialogTitle: document.getElementById("logDialogTitle"),
   logDialogCloseBtn: document.getElementById("logDialogCloseBtn"),
@@ -971,6 +990,36 @@ function stopMicMeter() {
   lastMicLevelSentAt = 0;
   el.micMeterFill.style.width = "0%";
 }
+
+/* ---------- 字幕の文字サイズ ---------- */
+/* --subtitle-scaleに掛け算するだけなので、原文・訳文・状態表示の
+   比率は常に保たれる。既定（medium）は今までと同じ大きさ。       */
+
+const SUBTITLE_SIZE_STORAGE = "liveTranslateSubtitleSize";
+const SUBTITLE_SCALES = { small: 0.85, medium: 1, large: 1.3 };
+let subtitleSize = "medium";
+
+try {
+  const savedSubtitleSize = localStorage.getItem(SUBTITLE_SIZE_STORAGE);
+  if (savedSubtitleSize && SUBTITLE_SCALES[savedSubtitleSize]) {
+    subtitleSize = savedSubtitleSize;
+  }
+} catch {}
+
+function applySubtitleSize() {
+  document.documentElement.style.setProperty("--subtitle-scale", SUBTITLE_SCALES[subtitleSize]);
+  el.fontSizeSelect.value = subtitleSize;
+}
+
+el.fontSizeSelect.addEventListener("change", () => {
+  subtitleSize = el.fontSizeSelect.value;
+  try {
+    localStorage.setItem(SUBTITLE_SIZE_STORAGE, subtitleSize);
+  } catch {}
+  applySubtitleSize();
+});
+
+applySubtitleSize();
 
 /* ---------- 接続・切断の効果音 ---------- */
 /* 音声ファイルを使わず、Web Audio APIで短いチャイム音をその場で生成する。
@@ -2233,6 +2282,9 @@ function applyI18n() {
   el.logDialogTitle.textContent = t("logDialogTitle");
   el.logCopyAllBtn.textContent = t("logCopyAllBtn");
   el.logDeleteAllBtn.textContent = t("logDeleteAllBtn");
+  el.fontSizeOptSmall.textContent = t("fontSizeSmall");
+  el.fontSizeOptMedium.textContent = t("fontSizeMedium");
+  el.fontSizeOptLarge.textContent = t("fontSizeLarge");
 
   updateLogPlaceholder();
   renderStatus();
