@@ -701,9 +701,10 @@ let callStartTimestamp = null;
 
 function updateCallTimerDisplay() {
   const elapsed = Math.floor((Date.now() - callStartTimestamp) / 1000);
-  const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const h = Math.floor(elapsed / 3600);
+  const mm = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
-  el.callTimer.textContent = `${mm}:${ss}`;
+  el.callTimer.textContent = h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 function startCallTimer() {
