@@ -268,6 +268,8 @@
       <option value="ja">日本語</option>
       <option value="ko">한국어</option>
     </select>
+
+    <button id="soundToggleBtn" type="button">効果音: オン</button>
   </div>
 
   <button id="connectBtn">つなぐ</button>
@@ -345,6 +347,8 @@ const I18N = {
     createRoomBtn: "部屋を作る",
     inviteBtn: "招待文をコピー",
     settingsBtn: "設定",
+    soundOn: "効果音: オン",
+    soundOff: "効果音: オフ",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -405,6 +409,8 @@ const I18N = {
     createRoomBtn: "방 만들기",
     inviteBtn: "초대 문구 복사",
     settingsBtn: "설정",
+    soundOn: "효과음: 켜짐",
+    soundOff: "효과음: 꺼짐",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -492,6 +498,7 @@ const el = {
   callTimer: document.getElementById("callTimer"),
   hangupBtn: document.getElementById("hangupBtn"),
   settingsBtn: document.getElementById("settingsBtn"),
+  soundToggleBtn: document.getElementById("soundToggleBtn"),
   direction: document.getElementById("direction"),
   dirOptJaKo: document.getElementById("dirOptJaKo"),
   dirOptKoJa: document.getElementById("dirOptKoJa"),
@@ -827,16 +834,93 @@ function stopMicMeter() {
   el.micMeterFill.style.width = "0%";
 }
 
+/* ---------- 接続・切断の効果音 ---------- */
+/* 音声ファイルを使わず、Web Audio APIで短いチャイム音をその場で生成する。
+   参加は上がる2音、退出は下がる2音。音量は控えめにしてある。          */
+
+const SOUND_PREF_STORAGE = "liveTranslateSoundEnabled";
+const SFX_VOLUME = 0.06;
+let soundEnabled = true;
+
+try {
+  const savedSoundPref = localStorage.getItem(SOUND_PREF_STORAGE);
+  if (savedSoundPref !== null) soundEnabled = savedSoundPref === "1";
+} catch {}
+
+let sfxAudioContext = null;
+
+function getSfxAudioContext() {
+  if (!sfxAudioContext) {
+    sfxAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (sfxAudioContext.state === "suspended") {
+    sfxAudioContext.resume().catch(() => {});
+  }
+  return sfxAudioContext;
+}
+
+function playTone(ctx, freq, startTime, duration) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = freq;
+
+  // クリック音を避けるための短いフェードイン・フェードアウト。
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(SFX_VOLUME, startTime + 0.015);
+  gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.02);
+}
+
+function playJoinSound() {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getSfxAudioContext();
+    const now = ctx.currentTime;
+    playTone(ctx, 523.25, now, 0.11); // ド→ソ（上がる2音）
+    playTone(ctx, 783.99, now + 0.11, 0.14);
+  } catch {}
+}
+
+function playLeaveSound() {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getSfxAudioContext();
+    const now = ctx.currentTime;
+    playTone(ctx, 783.99, now, 0.11); // ソ→ド（下がる2音）
+    playTone(ctx, 523.25, now + 0.11, 0.14);
+  } catch {}
+}
+
+function updateSoundToggleButton() {
+  el.soundToggleBtn.textContent = t(soundEnabled ? "soundOn" : "soundOff");
+  el.soundToggleBtn.setAttribute("aria-pressed", String(soundEnabled));
+}
+
+el.soundToggleBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  try {
+    localStorage.setItem(SOUND_PREF_STORAGE, soundEnabled ? "1" : "0");
+  } catch {}
+  updateSoundToggleButton();
+});
+
 function markPeerJoined() {
   if (peerJoined) return;
   peerJoined = true;
   addSystemMessage(t("peerJoined"));
+  playJoinSound();
 }
 
 function markPeerLeft() {
   if (!peerJoined) return;
   peerJoined = false;
   addSystemMessage(t("peerLeft"));
+  playLeaveSound();
 }
 
 /* ---------- DataChannel: 字幕の送受信 ---------- */
@@ -1797,6 +1881,7 @@ function applyI18n() {
   updateCallInfo();
   updateCharUsageDisplay();
   updateLastCallDisplay();
+  updateSoundToggleButton();
 }
 
 function updateLogPlaceholder() {
