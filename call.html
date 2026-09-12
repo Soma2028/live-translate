@@ -396,15 +396,44 @@ const LANGS = {
 };
 
 // 翻訳前に確定テキストへ適用する用語辞書。STTが誤認識しがちな単語を
-// ここで直してから翻訳に渡す。キー=誤認識されがちな表記 / 値=正しい表記。
-const GLOSSARY = {
-  "来たさと": "北里",
-  "きたさと": "北里"
-};
+// ここで直してから翻訳に渡す。リポジトリ直下のglossary.mdから読み込む
+// （「誤認識 => 正しい表記」の1行ずつ、#始まりと空行は無視）。
+// 読み込みが終わる前・失敗したときはGLOSSARY_ENTRIESが空のままなので、
+// applyGlossaryは何もせずtextをそのまま返す＝翻訳自体は落ちない。
+let GLOSSARY_ENTRIES = []; // [{ wrong, right }, ...] 誤認識側が長い順
+
+function parseGlossary(text) {
+  const entries = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const sepIndex = line.indexOf("=>");
+    if (sepIndex === -1) continue;
+    const wrong = line.slice(0, sepIndex).trim();
+    const right = line.slice(sepIndex + 2).trim();
+    if (!wrong || !right) continue;
+    entries.push({ wrong, right });
+  }
+  // 短いパターンが先に当たって長いパターンを壊さないよう、長い順にする。
+  entries.sort((a, b) => b.wrong.length - a.wrong.length);
+  return entries;
+}
+
+async function loadGlossaryFile() {
+  try {
+    const res = await fetch(`glossary.md?t=${Date.now()}`); // キャッシュ対策
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    GLOSSARY_ENTRIES = parseGlossary(text);
+    debugLog(`glossary.md読み込み完了: ${GLOSSARY_ENTRIES.length}件`);
+  } catch (err) {
+    debugLog("glossary.md読み込み失敗（辞書なしで続行）:", err.message);
+  }
+}
 
 function applyGlossary(text) {
   let result = text;
-  for (const [wrong, right] of Object.entries(GLOSSARY)) {
+  for (const { wrong, right } of GLOSSARY_ENTRIES) {
     result = result.replaceAll(wrong, right);
   }
   return result;
@@ -2233,6 +2262,7 @@ el.uiLang.addEventListener("change", () => {
 
 updatePhaseUI();
 applyI18n();
+loadGlossaryFile();
 </script>
 </body>
 </html>
