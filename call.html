@@ -385,6 +385,7 @@ const I18N = {
     logEmptyPrecall: "リンクを送って、相手が参加するのを待ちましょう。",
     logEmptyIncall: "「開始」を押して話すと、ここに字幕が出ます。",
     hint: "自分のマイクだけを認識します。相手の声は認識しません。",
+    escHint: "Escキーで直前の字幕を取り消せます。",
     translating: "翻訳中…",
     translateFailed: "翻訳できませんでした（{detail}）",
     emptyResponse: "空の応答",
@@ -447,6 +448,7 @@ const I18N = {
     logEmptyPrecall: "링크를 보내고 상대방이 참여하기를 기다리세요.",
     logEmptyIncall: "[시작]을 누르고 말하면 여기에 자막이 나옵니다.",
     hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다.",
+    escHint: "Esc 키로 직전 자막을 취소할 수 있어요.",
     translating: "번역 중…",
     translateFailed: "번역하지 못했습니다 ({detail})",
     emptyResponse: "빈 응답",
@@ -687,6 +689,7 @@ function updatePhaseUI() {
 
   updateLogPlaceholder();
   updateLastCallDisplay();
+  updateHintText();
 }
 
 el.settingsBtn.addEventListener("click", () => {
@@ -1872,7 +1875,7 @@ function applyI18n() {
   el.toggle.textContent = t(stt && stt.running ? "stopBtn" : "startBtn");
   el.dirOptJaKo.textContent = t("directionJaKo");
   el.dirOptKoJa.textContent = t("directionKoJa");
-  el.hint.textContent = t("hint");
+  updateHintText();
   el.settingsBtn.setAttribute("aria-label", t("settingsBtn"));
   el.settingsBtn.title = t("settingsBtn");
 
@@ -1889,6 +1892,10 @@ function updateLogPlaceholder() {
   const emptyEl = el.log.querySelector(".empty");
   if (!emptyEl) return;
   emptyEl.textContent = t(uiPhase === "incall" ? "logEmptyIncall" : "logEmptyPrecall");
+}
+
+function updateHintText() {
+  el.hint.textContent = t(uiPhase === "incall" ? "escHint" : "hint");
 }
 
 el.uiLang.addEventListener("change", () => {
