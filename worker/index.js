@@ -142,13 +142,16 @@ async function translateWithWorkersAI(env, text, from, to, context) {
     clearTimeout(timeoutId);
   }
 
-  // 一時デバッグ: qwen3-30b-a3b-fp8の戻り値の実際の構造を確認するため。
-  // 原因が分かったら削除する。
-  console.log("Workers AI raw result:", JSON.stringify(result));
-
-  // choices[0].message.content が本来の取り出し先。resultはモデルによって
-  // 形が違う（.responseにフラットに入ることもある）ので両方に対応しておく。
-  const translated = (result?.choices?.[0]?.message?.content ?? result?.response ?? "").trim();
+  // qwen3-30b-a3b-fp8はcontentがnullで、訳文がreasoning_content/reasoning側に
+  // 入ってくることがあるため、順番に見ていって最初に値があるものを使う。
+  const message = result?.choices?.[0]?.message;
+  const translated = (
+    message?.content ??
+    message?.reasoning_content ??
+    message?.reasoning ??
+    result?.response ??
+    ""
+  ).trim();
   if (!translated) throw new Error("Workers AIから空の応答");
 
   console.log(`translate engine=workers-ai neurons=${result?.usage?.neurons} completion_tokens=${result?.usage?.completion_tokens}`);
