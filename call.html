@@ -448,6 +448,65 @@ function applyGlossary(text) {
   return result;
 }
 
+// 定型フレーズ表。完全一致した確定テキストはWorkerを呼ばず即座に返す。
+// リポジトリ直下のfixed-phrases.mdから読み込む。[ja => ko]/[ko => ja]の
+// セクションで方向を分け、「原文 => 訳文」を1行ずつ解釈する。
+// 読み込みが終わる前・失敗したときは空のテーブルのままなので、
+// 一致せず従来どおり翻訳APIに回る＝翻訳自体は落ちない。
+let FIXED_PHRASES = { "ja-ko": new Map(), "ko-ja": new Map() };
+
+// 前後の空白と、末尾の「。」「、」を無視して照合するための正規化。
+function normalizeFixedPhraseKey(text) {
+  return text.trim().replace(/[。、]+$/, "");
+}
+
+function parseFixedPhrases(text) {
+  const tables = { "ja-ko": new Map(), "ko-ja": new Map() };
+  let currentKey = null;
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    if (line.startsWith("[") && line.endsWith("]")) {
+      const inner = line.slice(1, -1).replace(/\s+/g, "");
+      currentKey = inner === "ja=>ko" ? "ja-ko" : inner === "ko=>ja" ? "ko-ja" : null;
+      continue;
+    }
+    if (!currentKey) continue;
+
+    const sepIndex = line.indexOf("=>");
+    if (sepIndex === -1) continue;
+    const src = normalizeFixedPhraseKey(line.slice(0, sepIndex));
+    const dstText = line.slice(sepIndex + 2).trim();
+    if (!src || !dstText) continue;
+
+    tables[currentKey].set(src, dstText);
+  }
+
+  return tables;
+}
+
+async function loadFixedPhrasesFile() {
+  try {
+    const res = await fetch(`fixed-phrases.md?t=${Date.now()}`); // キャッシュ対策
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    FIXED_PHRASES = parseFixedPhrases(text);
+    debugLog(`fixed-phrases.md読み込み完了: ja-ko=${FIXED_PHRASES["ja-ko"].size}件 ko-ja=${FIXED_PHRASES["ko-ja"].size}件`);
+  } catch (err) {
+    debugLog("fixed-phrases.md読み込み失敗（表なしで続行）:", err.message);
+  }
+}
+
+// glossary適用後のtextに対して呼ぶこと。一致すれば訳文を、なければnullを返す。
+function lookupFixedPhrase(text, direction) {
+  const table = FIXED_PHRASES[direction];
+  if (!table) return null;
+  const key = normalizeFixedPhraseKey(text);
+  return table.has(key) ? table.get(key) : null;
+}
+
 /* ---------- i18n: 表示言語ごとの文言 ---------- */
 /* キーで引く形にまとめてある。増やすときはここに追記すればよい。 */
 
@@ -2079,12 +2138,23 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
   const turn = dst.closest(".turn");
   if (turn) turn.dataset.id = id;
 
+  sendToPeer({ kind: "subtitle-final", id, text, direction });
+
+  // 定型フレーズ表に完全一致すれば、Workerを呼ばず即座に確定させる。
+  const fixedTranslation = lookupFixedPhrase(text, direction);
+  if (fixedTranslation !== null) {
+    dst.className = "dst";
+    dst.textContent = fixedTranslation;
+    sendToPeer({ kind: "subtitle-translated", id, text: fixedTranslation });
+    logSubtitle(id, "own", text, fixedTranslation);
+    el.log.scrollTop = el.log.scrollHeight;
+    return id;
+  }
+
   addCharUsage(text.length);
 
   dst.className = "dst pending";
   dst.textContent = t("translating");
-
-  sendToPeer({ kind: "subtitle-final", id, text, direction });
 
   enqueue(async () => {
     try {
@@ -2315,6 +2385,7 @@ el.uiLang.addEventListener("change", () => {
 updatePhaseUI();
 applyI18n();
 loadGlossaryFile();
+loadFixedPhrasesFile();
 </script>
 </body>
 </html>
