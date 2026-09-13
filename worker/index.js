@@ -1,7 +1,10 @@
 // call.html からの翻訳リクエストを中継するWorker。
-// 主経路と、失敗時に自動で使われるフォールバックはこのフラグで決まる。
-// "azure" か "workers-ai" を指定する。逆側のコードは消さずに残してある。
-const PRIMARY_ENGINE = "workers-ai";
+// 原文が短ければ速度優先でAzure、長ければ品質優先でWorkers AIを主経路にする。
+// 相槌や短い返事は多少硬くても気にならないが、速さは効いてくるため。
+// どちらを使っても、失敗（Workers AIはタイムアウトも含む）したときは
+// 逆側に自動でフォールバックする。
+const SHORT_TEXT_THRESHOLD = 8; // この文字数以下ならAzure優先
+const WORKERS_AI_TIMEOUT_MS = 3000;
 
 const ALLOWED_ORIGINS = new Set([
   "https://soma2028.github.io",
@@ -64,9 +67,13 @@ function buildSystemPrompt(from, to) {
   return `20代の友人同士の電話の通訳。${fromName}→${toName}へ${tone}で自然に訳す。訳文のみ出力（説明・引用符・原文・思考過程なし）。`;
 }
 
-// Workers AI（LLM）で翻訳する。失敗したら例外を投げ、呼び出し側でフォールバックする。
+// Workers AI（LLM）で翻訳する。失敗（タイムアウト含む）したら例外を投げ、
+// 呼び出し側でフォールバックする。
 async function translateWithWorkersAI(env, text, from, to) {
-  const result = await env.AI.run(WORKERS_AI_MODEL, {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), WORKERS_AI_TIMEOUT_MS);
+
+  const runPromise = env.AI.run(WORKERS_AI_MODEL, {
     messages: [
       { role: "system", content: buildSystemPrompt(from, to) },
       { role: "user", content: text }
@@ -76,14 +83,34 @@ async function translateWithWorkersAI(env, text, from, to) {
     // Qwen3系の「思考モード」を止める。これがないと訳文の前に長い
     // reasoningが生成され、トークン（neurons）を無駄に消費してしまう。
     chat_template_kwargs: { enable_thinking: false }
+  }, { signal: controller.signal });
+
+  // タイムアウト後にこのPromiseが裏で拒否されても、未処理のrejectionとして
+  // ログを汚さないようにしておく（結果はもう使わない）。
+  runPromise.catch(() => {});
+
+  const timeoutPromise = new Promise((_, reject) => {
+    controller.signal.addEventListener("abort", () => reject(new Error("workers-ai timeout")));
   });
+
+  let result;
+  try {
+    result = await Promise.race([runPromise, timeoutPromise]);
+  } catch (err) {
+    if (err.message === "workers-ai timeout") {
+      console.warn("workers-ai timeout, falling back to azure");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   // choices[0].message.content が本来の取り出し先。resultはモデルによって
   // 形が違う（.responseにフラットに入ることもある）ので両方に対応しておく。
   const translated = (result?.choices?.[0]?.message?.content ?? result?.response ?? "").trim();
   if (!translated) throw new Error("Workers AIから空の応答");
 
-  console.log(`Workers AI usage: neurons=${result?.usage?.neurons} completion_tokens=${result?.usage?.completion_tokens}`);
+  console.log(`translate engine=workers-ai neurons=${result?.usage?.neurons} completion_tokens=${result?.usage?.completion_tokens}`);
 
   return translated;
 }
@@ -109,6 +136,9 @@ async function translateWithAzure(env, text, from, to) {
   const data = await azureRes.json();
   const translated = data?.[0]?.translations?.[0]?.text;
   if (!translated) throw new Error("Azureから空の応答");
+
+  console.log("translate engine=azure");
+
   return translated;
 }
 
@@ -152,14 +182,11 @@ export default {
       return json({ error: "fromとtoを指定してください" }, 400, cors);
     }
 
-    const engines = {
-      azure: translateWithAzure,
-      "workers-ai": translateWithWorkersAI
-    };
-    const primary = engines[PRIMARY_ENGINE] || translateWithAzure;
-    const primaryName = engines[PRIMARY_ENGINE] ? PRIMARY_ENGINE : "azure";
-    const fallback = primaryName === "azure" ? translateWithWorkersAI : translateWithAzure;
+    // 短い発話は速度優先でAzure、長い発話は品質優先でWorkers AIを主経路にする。
+    const primaryName = text.length <= SHORT_TEXT_THRESHOLD ? "azure" : "workers-ai";
     const fallbackName = primaryName === "azure" ? "workers-ai" : "azure";
+    const primary = primaryName === "azure" ? translateWithAzure : translateWithWorkersAI;
+    const fallback = fallbackName === "azure" ? translateWithAzure : translateWithWorkersAI;
 
     try {
       const translated = await primary(env, text, from, to);
