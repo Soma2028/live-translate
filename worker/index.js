@@ -1,7 +1,7 @@
 // call.html からの翻訳リクエストを中継するWorker。
 // 主経路と、失敗時に自動で使われるフォールバックはこのフラグで決まる。
 // "azure" か "workers-ai" を指定する。逆側のコードは消さずに残してある。
-const PRIMARY_ENGINE = "azure";
+const PRIMARY_ENGINE = "workers-ai";
 
 const ALLOWED_ORIGINS = new Set([
   "https://soma2028.github.io",
