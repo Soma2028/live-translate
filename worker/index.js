@@ -75,7 +75,8 @@ function buildSystemPrompt(from, to) {
     `あなたは20代の友人同士による、くだけた電話の会話を訳す通訳です。\n` +
     `次の${fromName}の発話を${toName}に訳してください。\n` +
     `${toneNote}\n` +
-    `訳文だけを出力し、説明・引用符・原文は付けないこと。`
+    `訳文だけを出力し、説明・引用符・原文は付けないこと。\n` +
+    `内部で考えたり手順を書いたりせず、最終的な訳文だけを即座に出力すること。`
   );
 }
 
@@ -86,15 +87,16 @@ async function translateWithWorkersAI(env, text, from, to) {
       { role: "system", content: buildSystemPrompt(from, to) },
       { role: "user", content: text }
     ],
-    max_tokens: 1024,
-    temperature: 0.3
+    max_tokens: 300,
+    temperature: 0.3,
+    // Qwen3系の「思考モード」を止める。これがないと訳文の前に長い
+    // reasoningが生成され、トークン（neurons）を無駄に消費してしまう。
+    chat_template_kwargs: { enable_thinking: false }
   });
 
-  // 一時デバッグ: env.AI.run()の戻り値の実際の構造を確認するため。
-  // 原因が分かったら削除する。
-  console.log("Workers AI raw result:", JSON.stringify(result));
-
-  const translated = result?.response?.trim();
+  // choices[0].message.content が本来の取り出し先。resultはモデルによって
+  // 形が違う（.responseにフラットに入ることもある）ので両方に対応しておく。
+  const translated = (result?.choices?.[0]?.message?.content ?? result?.response ?? "").trim();
   if (!translated) throw new Error("Workers AIから空の応答");
   return translated;
 }
