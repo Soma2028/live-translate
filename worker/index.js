@@ -6,7 +6,7 @@ import NAMES from "./names.json";
 // どちらを使っても、失敗（Workers AIはタイムアウトも含む）したときは
 // 逆側に自動でフォールバックする。
 const SHORT_TEXT_THRESHOLD = 8; // この文字数以下ならAzure優先
-const WORKERS_AI_TIMEOUT_MS = 3000;
+const WORKERS_AI_TIMEOUT_MS = 5000;
 
 const ALLOWED_ORIGINS = new Set([
   "https://soma2028.github.io",
@@ -130,7 +130,7 @@ async function translateWithWorkersAI(env, text, from, to, context) {
     result = await Promise.race([runPromise, timeoutPromise]);
   } catch (err) {
     if (err.message === "workers-ai timeout") {
-      console.warn("workers-ai timeout, falling back to azure");
+      console.warn("workers-ai timeout");
     }
     throw err;
   } finally {
@@ -170,7 +170,7 @@ async function translateWithAzure(env, text, from, to, context) {
   const translated = data?.[0]?.translations?.[0]?.text;
   if (!translated) throw new Error("Azureから空の応答");
 
-  console.log("translate engine=azure");
+  console.log(`translate engine=azure len=${text.length}`);
 
   return translated;
 }
