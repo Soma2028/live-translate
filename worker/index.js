@@ -98,6 +98,9 @@ async function translateWithWorkersAI(env, text, from, to) {
   // 形が違う（.responseにフラットに入ることもある）ので両方に対応しておく。
   const translated = (result?.choices?.[0]?.message?.content ?? result?.response ?? "").trim();
   if (!translated) throw new Error("Workers AIから空の応答");
+
+  console.log(`Workers AI usage: neurons=${result?.usage?.neurons} completion_tokens=${result?.usage?.completion_tokens}`);
+
   return translated;
 }
 
