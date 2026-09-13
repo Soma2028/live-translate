@@ -1,3 +1,5 @@
+import NAMES from "./names.json";
+
 // call.html からの翻訳リクエストを中継するWorker。
 // 原文が短ければ速度優先でAzure、長ければ品質優先でWorkers AIを主経路にする。
 // 相槌や短い返事は多少硬くても気にならないが、速さは効いてくるため。
@@ -57,14 +59,29 @@ function json(body, status, cors) {
   });
 }
 
+// names.jsonは「日本語 => 韓国語表記」の対応表。原文にどちらか片方が
+// 実際に含まれているときだけプロンプトに載せる（毎回全件載せてトークンを
+// 無駄にしないため）。to==="ko"なら日本語名→韓国語表記、to==="ja"なら
+// その逆で使う。
+function buildNameNote(text, to) {
+  const pairs = [];
+  for (const [ja, ko] of Object.entries(NAMES)) {
+    if (to === "ko" && text.includes(ja)) pairs.push(`${ja}→${ko}`);
+    else if (to === "ja" && text.includes(ko)) pairs.push(`${ko}→${ja}`);
+  }
+  if (pairs.length === 0) return "";
+  return `固有名詞は次の表記を使う: ${pairs.join("、")}。`;
+}
+
 // prompt_tokens（≒neuron消費）を削るため、口調の指定（20代の友人・반말/タメ口）
 // だけ残して、それ以外の説明は削ってある。
-function buildSystemPrompt(from, to) {
+function buildSystemPrompt(from, to, text) {
   const fromName = LANG_NAMES_JA[from] || from;
   const toName = LANG_NAMES_JA[to] || to;
   const tone = to === "ko" ? "반말" : to === "ja" ? "タメ口" : "くだけた話し言葉";
+  const nameNote = buildNameNote(text, to);
 
-  return `20代の友人同士の電話の通訳。${fromName}→${toName}へ${tone}で自然に訳す。訳文のみ出力（説明・引用符・原文・思考過程なし）。`;
+  return `20代の友人同士の電話の通訳。${fromName}→${toName}へ${tone}で自然に訳す。訳文のみ出力（説明・引用符・原文・思考過程なし）。${nameNote}`;
 }
 
 // Workers AI（LLM）で翻訳する。失敗（タイムアウト含む）したら例外を投げ、
@@ -75,7 +92,7 @@ async function translateWithWorkersAI(env, text, from, to) {
 
   const runPromise = env.AI.run(WORKERS_AI_MODEL, {
     messages: [
-      { role: "system", content: buildSystemPrompt(from, to) },
+      { role: "system", content: buildSystemPrompt(from, to, text) },
       { role: "user", content: text }
     ],
     max_tokens: 300,
