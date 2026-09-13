@@ -18,8 +18,10 @@ const RATE_LIMIT_MAX = 60;
 const MAX_TEXT_LENGTH = 2000;
 
 // Qwenは日本語・韓国語の口語表現に比較的強いので採用。
+// qwen3.8-27bがタイムアウトしがちだったため、MoE構造で1トークンあたりの
+// 実計算量が少なく速いqwen3-30b-a3b-fp8（総パラメータ30B・実働3B）に変更。
 // 変えたいときはここだけ書き換えればよい。
-const WORKERS_AI_MODEL = "@cf/qwen/qwen3.8-27b";
+const WORKERS_AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 
 const LANG_NAMES_JA = { ja: "日本語", ko: "韓国語" };
 
@@ -112,8 +114,11 @@ async function translateWithWorkersAI(env, text, from, to, context) {
     ],
     max_tokens: 300,
     temperature: 0.3,
-    // Qwen3系の「思考モード」を止める。これがないと訳文の前に長い
-    // reasoningが生成され、トークン（neurons）を無駄に消費してしまう。
+    // Qwen3系共通の「思考モード」停止パラメータ。qwen3-30b-a3b-fp8も
+    // 同じQwen3チャットテンプレートを使うため、これがないと訳文の前に
+    // 長いreasoningが生成され、トークン（neurons）を無駄に消費する。
+    // モデル変更後は、下のusageログのcompletion_tokensが極端に大きく
+    // ないか確認すること（大きいままなら効いていない = 別の指定方法を探す）。
     chat_template_kwargs: { enable_thinking: false }
   }, { signal: controller.signal });
 
