@@ -75,24 +75,39 @@ function buildNameNote(text, to) {
 
 // prompt_tokens（≒neuron消費）を削るため、口調の指定（20代の友人・반말/タメ口）
 // だけ残して、それ以外の説明は削ってある。
-function buildSystemPrompt(from, to, text) {
+// 直近の会話（原文/訳文のペア）を短くまとめる。「高い」が身長か値段かの
+// ような曖昧さを、会話の流れから判断できるようにするため。
+function buildContextNote(context) {
+  if (!context || context.length === 0) return "";
+  const lines = context.map(pair => `${pair.src}→${pair.dst}`).join(" / ");
+  return `直近の会話: ${lines}。`;
+}
+
+function buildSystemPrompt(from, to, text, context) {
   const fromName = LANG_NAMES_JA[from] || from;
   const toName = LANG_NAMES_JA[to] || to;
   const tone = to === "ko" ? "반말" : to === "ja" ? "タメ口" : "くだけた話し言葉";
   const nameNote = buildNameNote(text, to);
+  const contextNote = buildContextNote(context);
 
-  return `20代の友人同士の電話の通訳。${fromName}→${toName}へ${tone}で自然に訳す。訳文のみ出力（説明・引用符・原文・思考過程なし）。${nameNote}`;
+  return `20代の友人同士の電話の通訳。${fromName}→${toName}へ${tone}で自然に訳す。訳文のみ出力（説明・引用符・原文・思考過程なし）。${nameNote}${contextNote}`;
 }
 
 // Workers AI（LLM）で翻訳する。失敗（タイムアウト含む）したら例外を投げ、
 // 呼び出し側でフォールバックする。
-async function translateWithWorkersAI(env, text, from, to) {
+async function translateWithWorkersAI(env, text, from, to, context) {
+  // クライアントから届いた値をそのまま信用しない。配列以外や不正な要素は捨て、
+  // 念のためサーバー側でも直近6件に切り詰める。
+  const safeContext = Array.isArray(context)
+    ? context.slice(-6).filter(pair => pair && typeof pair.src === "string" && typeof pair.dst === "string")
+    : [];
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), WORKERS_AI_TIMEOUT_MS);
 
   const runPromise = env.AI.run(WORKERS_AI_MODEL, {
     messages: [
-      { role: "system", content: buildSystemPrompt(from, to, text) },
+      { role: "system", content: buildSystemPrompt(from, to, text, safeContext) },
       { role: "user", content: text }
     ],
     max_tokens: 300,
@@ -133,7 +148,8 @@ async function translateWithWorkersAI(env, text, from, to) {
 }
 
 // 専用の翻訳API。口調の指定はできないが、速くて安定している。
-async function translateWithAzure(env, text, from, to) {
+// contextは受け取れないので、引数にはあるが使わない。
+async function translateWithAzure(env, text, from, to, context) {
   const azureUrl =
     `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0` +
     `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
@@ -190,7 +206,7 @@ export default {
       return json({ error: "不正なJSONです" }, 400, cors);
     }
 
-    const { text, from, to } = payload || {};
+    const { text, from, to, context } = payload || {};
 
     if (typeof text !== "string" || text.length === 0 || text.length > MAX_TEXT_LENGTH) {
       return json({ error: `textは1〜${MAX_TEXT_LENGTH}文字で指定してください` }, 400, cors);
@@ -206,14 +222,14 @@ export default {
     const fallback = fallbackName === "azure" ? translateWithAzure : translateWithWorkersAI;
 
     try {
-      const translated = await primary(env, text, from, to);
+      const translated = await primary(env, text, from, to, context);
       return json({ text: translated }, 200, cors);
     } catch (err) {
       console.warn(`${primaryName} translation failed, falling back to ${fallbackName}:`, err.message);
     }
 
     try {
-      const translated = await fallback(env, text, from, to);
+      const translated = await fallback(env, text, from, to, context);
       console.log(`${fallbackName} fallback succeeded`);
       return json({ text: translated }, 200, cors);
     } catch (err) {
