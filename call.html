@@ -1400,10 +1400,10 @@ function markPeerJoined() {
   peerJoined = true;
   addSystemMessage(t("peerJoined"));
   playJoinSound();
-  // DataChannelが開通した時点をもって「通話が確立した」とみなす。
+  // DataChannelが開通した時点をもって「相手側が確立した」とみなす。
   // pc.connectionStateはブラウザによって"connected"への遷移が遅れたり
-  // 発火しないことがあるため、音量バーの表示はこちらを正とする。
-  el.micMeterGroup.hidden = false;
+  // 発火しないことがあるため、相手の音量バーの表示はこちらを正とする。
+  // 自分の音量バーはマイク取得時点（connect内）で先に表示済み。
   el.peerMicMeterGroup.hidden = false;
 }
 
@@ -1412,7 +1412,6 @@ function markPeerLeft() {
   peerJoined = false;
   addSystemMessage(t("peerLeft"));
   playLeaveSound();
-  el.micMeterGroup.hidden = true;
   el.peerMicMeterGroup.hidden = true;
 }
 
@@ -1557,6 +1556,10 @@ async function connect() {
       video: false
     });
     startMicMeter(localStream);
+    // 相手を待っている間も自分のマイクが拾えているか確認できるよう、
+    // マイク取得できた時点で自分の音量バーだけ先に表示する。
+    // 相手側のバーはこれまで通りmarkPeerJoinedで表示する。
+    el.micMeterGroup.hidden = false;
   } catch (err) {
     setError("micDenied");
     resetUI();
