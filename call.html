@@ -253,6 +253,27 @@
   #interim:empty { display: none; }
   .hint { font-size: 12px; color: var(--muted); padding: 0 16px 10px; }
 
+  #textInputRow {
+    padding: 6px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+  #textInput {
+    display: block;
+    width: 100%;
+    height: 36px;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.4;
+    font: inherit;
+    font-size: 14px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+
   #logViewDialog {
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -376,6 +397,10 @@
 <main id="log">
   <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
 </main>
+
+<div id="textInputRow" hidden>
+  <textarea id="textInput" rows="1" placeholder="音声が届かないときはここに入力"></textarea>
+</div>
 
 <p class="hint" id="hint">自分のマイクだけを認識します。相手の声は認識しません。</p>
 
@@ -549,6 +574,8 @@ const I18N = {
     fontSizeSmall: "小",
     fontSizeMedium: "中",
     fontSizeLarge: "大",
+    textInputPlaceholder: "音声が届かないときはここに入力",
+    logInputTag: "入力",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -628,6 +655,8 @@ const I18N = {
     fontSizeSmall: "작게",
     fontSizeMedium: "보통",
     fontSizeLarge: "크게",
+    textInputPlaceholder: "음성이 안 들릴 때는 여기에 입력",
+    logInputTag: "입력",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -744,6 +773,8 @@ const el = {
   sttStatus: document.getElementById("sttStatus"),
   log: document.getElementById("log"),
   hint: document.getElementById("hint"),
+  textInputRow: document.getElementById("textInputRow"),
+  textInput: document.getElementById("textInput"),
   remoteAudio: document.getElementById("remoteAudio")
 };
 
@@ -909,6 +940,7 @@ function updatePhaseUI() {
   el.toggle.hidden = !inCall;
   el.hangupBtn.hidden = !inCall;
   el.settingsBtn.hidden = !inCall;
+  el.textInputRow.hidden = !inCall;
 
   if (inCall) {
     el.shareLinkRow.hidden = true;
@@ -1227,14 +1259,14 @@ function persistCallLog(log) {
   }
 }
 
-function logSubtitle(id, speaker, src, dst) {
+function logSubtitle(id, speaker, src, dst, inputMethod = "voice") {
   const log = loadCallLog();
   const dateKey = localDateKey();
   if (!log[dateKey]) log[dateKey] = [];
 
   const entries = log[dateKey];
   const existingIndex = entries.findIndex(e => e.id === id);
-  const entry = { id, time: Date.now(), speaker, src, dst };
+  const entry = { id, time: Date.now(), speaker, src, dst, inputMethod };
   if (existingIndex >= 0) {
     entries[existingIndex] = entry;
   } else {
@@ -1264,7 +1296,8 @@ function formatLogDayAsText(dateKey, entries) {
   const lines = entries.map(e => {
     const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
     const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
-    return `${time} ${speakerLabel}: ${e.src} → ${e.dst}`;
+    const tag = e.inputMethod === "typed" ? `[${t("logInputTag")}] ` : "";
+    return `${time} ${speakerLabel}: ${tag}${e.src} → ${e.dst}`;
   });
   return `[${dateKey}]\n${lines.join("\n")}`;
 }
@@ -1324,7 +1357,8 @@ function renderLogDialog() {
       entryEl.className = "log-entry";
       const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
       const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
-      entryEl.textContent = `${time} ${speakerLabel}: ${e.src} → ${e.dst}`;
+      const tag = e.inputMethod === "typed" ? `[${t("logInputTag")}] ` : "";
+      entryEl.textContent = `${time} ${speakerLabel}: ${tag}${e.src} → ${e.dst}`;
       entriesEl.appendChild(entryEl);
     }
 
@@ -1447,7 +1481,7 @@ function handlePeerMessage(msg) {
       prunePeerPending();
       const conf = LANGS[msg.direction] || LANGS["ja-ko"];
       const dst = addTurn(msg.text, conf, true);
-      peerPending.set(msg.id, { dst, time: Date.now() });
+      peerPending.set(msg.id, { dst, time: Date.now(), inputMethod: msg.inputMethod || "voice" });
     }
   } else if (msg.kind === "subtitle-translated") {
     const entry = peerPending.get(msg.id);
@@ -1456,7 +1490,7 @@ function handlePeerMessage(msg) {
     entry.dst.textContent = msg.text;
     el.log.scrollTop = el.log.scrollHeight;
     const srcEl = entry.dst.previousElementSibling;
-    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", msg.text);
+    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", msg.text, entry.inputMethod);
     pushConversationContext(srcEl ? srcEl.textContent : "", msg.text);
   } else if (msg.kind === "subtitle-failed") {
     const entry = peerPending.get(msg.id);
@@ -1464,7 +1498,7 @@ function handlePeerMessage(msg) {
     entry.dst.className = "dst failed";
     entry.dst.textContent = t("peerTranslateFailed");
     const srcEl = entry.dst.previousElementSibling;
-    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", entry.dst.textContent);
+    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", entry.dst.textContent, entry.inputMethod);
   } else if (msg.kind === "subtitle-delete") {
     const entry = peerPending.get(msg.id);
     if (!entry) return;
@@ -2150,12 +2184,13 @@ function flushBatch() {
 }
 
 // idを指定しなければ新しい発言として、指定すればそのidの吹き出しを
-// 訂正（原文を上書きして翻訳し直す）扱いで送信する。
-function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
+// 訂正（原文を上書きして翻訳し直す）扱いで送信する。inputMethodは
+// 通話ログで音声/テキスト入力を区別するためだけに使う。
+function translateAndSend(text, direction, dst, id = crypto.randomUUID(), inputMethod = "voice") {
   const turn = dst.closest(".turn");
   if (turn) turn.dataset.id = id;
 
-  sendToPeer({ kind: "subtitle-final", id, text, direction });
+  sendToPeer({ kind: "subtitle-final", id, text, direction, inputMethod });
 
   // 定型フレーズ表に完全一致すれば、Workerを呼ばず即座に確定させる。
   const fixedTranslation = lookupFixedPhrase(text, direction);
@@ -2163,7 +2198,7 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
     dst.className = "dst";
     dst.textContent = fixedTranslation;
     sendToPeer({ kind: "subtitle-translated", id, text: fixedTranslation });
-    logSubtitle(id, "own", text, fixedTranslation);
+    logSubtitle(id, "own", text, fixedTranslation, inputMethod);
     pushConversationContext(text, fixedTranslation);
     el.log.scrollTop = el.log.scrollHeight;
     return id;
@@ -2180,13 +2215,13 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID()) {
       dst.className = "dst";
       dst.textContent = out;
       sendToPeer({ kind: "subtitle-translated", id, text: out });
-      logSubtitle(id, "own", text, out);
+      logSubtitle(id, "own", text, out, inputMethod);
       pushConversationContext(text, out);
     } catch (err) {
       dst.className = "dst failed";
       dst.textContent = t("translateFailed", { detail: formatErrorDetail(err.message) });
       sendToPeer({ kind: "subtitle-failed", id, reason: "error" });
-      logSubtitle(id, "own", text, dst.textContent);
+      logSubtitle(id, "own", text, dst.textContent, inputMethod);
     }
     el.log.scrollTop = el.log.scrollHeight;
   });
@@ -2314,6 +2349,47 @@ function handleFinal(text) {
   translateAndSend(text, direction, dst);
 }
 
+/* ---------- テキスト入力（音声が届かないときの逃げ道） ---------- */
+/* 音声の代替であってチャットではない。確定テキストと同じ経路
+   （glossary→fixed-phrases→names.json→会話文脈→エンジン振り分け）を
+   通すため、addTurn+translateAndSendを直接呼ぶ。STT専用の結合待ち・
+   先出し翻訳・重複除去はここでは意図的に素通りする（typedの発言を
+   進行中のSTTの状態と混ぜてしまうと事故になるため）。               */
+
+function submitTypedText() {
+  const text = applyGlossary(el.textInput.value.trim());
+  if (!text) return;
+
+  el.textInput.value = "";
+
+  const direction = el.direction.value;
+  const conf = LANGS[direction];
+  const dst = addTurn(text, conf, false);
+  translateAndSend(text, direction, dst, undefined, "typed");
+}
+
+el.textInput.addEventListener("keydown", (e) => {
+  // IME変換確定のEnterで誤送信しないためのガード。
+  // keyCode 229は一部ブラウザでisComposingが立たない場合の保険。
+  if (e.isComposing || e.keyCode === 229) return;
+
+  if (e.key === "Escape") {
+    // 入力欄でのEscは「直前の字幕を削除」ではなく、入力のクリアに使う
+    // （documentのEscハンドラはフォーカスがinput/textarea/selectのときは
+    //   何もしないようになっているので、ここで独自に処理する）。
+    if (el.textInput.value) {
+      e.preventDefault();
+      el.textInput.value = "";
+    }
+    return;
+  }
+
+  if (e.key !== "Enter" || e.shiftKey) return; // Shift+Enterは改行
+
+  e.preventDefault();
+  submitTypedText();
+});
+
 el.toggle.addEventListener("click", () => {
   if (stt && stt.running) {
     stt.stop();
@@ -2365,6 +2441,7 @@ function applyI18n() {
   el.dirOptJaKo.textContent = t("directionJaKo");
   el.dirOptKoJa.textContent = t("directionKoJa");
   updateHintText();
+  el.textInput.placeholder = t("textInputPlaceholder");
   el.settingsBtn.setAttribute("aria-label", t("settingsBtn"));
   el.settingsBtn.title = t("settingsBtn");
   el.viewLogBtn.textContent = t("viewLogBtn");
