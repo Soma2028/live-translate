@@ -235,7 +235,7 @@ export default {
 
     try {
       const translated = await primary(env, text, from, to, context);
-      return json({ text: translated }, 200, cors);
+      return json({ text: translated, engine: primaryName }, 200, cors);
     } catch (err) {
       console.warn(`${primaryName} translation failed, falling back to ${fallbackName}:`, err.message);
     }
@@ -243,7 +243,7 @@ export default {
     try {
       const translated = await fallback(env, text, from, to, context);
       console.log(`${fallbackName} fallback succeeded`);
-      return json({ text: translated }, 200, cors);
+      return json({ text: translated, engine: fallbackName }, 200, cors);
     } catch (err) {
       console.error(`${fallbackName} fallback also failed:`, err.message);
       return json({ error: "翻訳サービスへの接続に失敗しました" }, 502, cors);
