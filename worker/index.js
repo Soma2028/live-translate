@@ -17,6 +17,17 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 60;
 const MAX_TEXT_LENGTH = 2000;
 
+// Cloudflare Realtime TURNのクレデンシャル発行に関する設定。
+// 固定クレデンシャルを発行できない仕様のため、通話のたびに短命なものを
+// 都度発行する。TTLは通話1回ぶん程度にとどめ、漏洩時の被害を抑える。
+const TURN_TTL_SECONDS = 3600;
+// 翻訳は発話のたびに呼ばれるが、ICEは通話開始時に1回だけのはずなので、
+// 翻訳より厳しい回数で別枠にしておく。
+const ICE_RATE_LIMIT_MAX = 10;
+// TURNキー未設定・API障害・応答の検証失敗のいずれでも、通話自体は
+// 落とさずここにフォールバックする（直接接続できるケースもあるため）。
+const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
+
 // Qwenは日本語・韓国語の口語表現に比較的強いので採用。
 // qwen3.8-27bがタイムアウトしがちだったため、MoE構造で1トークンあたりの
 // 実計算量が少なく速いqwen3-30b-a3b-fp8（総パラメータ30B・実働3B）に変更。
@@ -28,16 +39,18 @@ const LANG_NAMES_JA = { ja: "日本語", ko: "韓国語" };
 // Worker上のシンプルなメモリ内カウンタ。同一アイソレートが使い回される限り効くが、
 // Cloudflareの複数拠点・複数アイソレートをまたいだ厳密なレート制限ではない
 // （2人だけの私用アプリなので、これで十分という判断）。
-const rateLimitMap = new Map(); // ip -> { count, windowStart }
+// 翻訳とICEで用途が違う（呼ばれる頻度も上限も違う）ため、キーに用途の
+// prefix（"translate:"/"ice:"）を付けて別枠でカウントする。
+const rateLimitMap = new Map(); // key -> { count, windowStart }
 
-function checkRateLimit(ip) {
+function checkRateLimit(key, max) {
   const now = Date.now();
-  const entry = rateLimitMap.get(ip);
+  const entry = rateLimitMap.get(key);
   if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    rateLimitMap.set(ip, { count: 1, windowStart: now });
+    rateLimitMap.set(key, { count: 1, windowStart: now });
     return true;
   }
-  if (entry.count >= RATE_LIMIT_MAX) {
+  if (entry.count >= max) {
     return false;
   }
   entry.count += 1;
@@ -48,7 +61,7 @@ function corsHeaders(origin) {
   if (!ALLOWED_ORIGINS.has(origin)) return {};
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
@@ -187,6 +200,51 @@ async function translateWithAzure(env, text, from, to, context) {
   return translated;
 }
 
+// Cloudflare Realtime TURNのAPIキーを使って、通話1回ぶんの短命ICEクレデンシャルを
+// 発行する。キー未設定・API障害・応答の検証失敗のいずれでも、通話自体は
+// 落とさずSTUN_ONLYで200を返す（TURNが効いているつもりで黙って中継なしのまま
+// 動いてしまう事故を防ぐため、検証だけは厳しくする）。
+async function handleIce(env, cors) {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+    console.warn("TURN_KEY_ID/TURN_KEY_API_TOKENが未設定のため、STUNのみで応答します");
+    return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
+  }
+
+  try {
+    const res = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.TURN_KEY_API_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS })
+      }
+    );
+
+    if (!res.ok) throw new Error(`Cloudflare Realtime TURN error: HTTP ${res.status}`);
+
+    const data = await res.json();
+    // 応答のiceServersは配列で返る場合と単一オブジェクトの場合があるため、
+    // 呼び出し側が扱いやすいよう配列に正規化しておく。
+    const iceServers = Array.isArray(data?.iceServers)
+      ? data.iceServers
+      : data?.iceServers ? [data.iceServers] : [];
+
+    const hasTurnUrl = iceServers.some(server => {
+      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+      return urls.some(u => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+    });
+    if (!hasTurnUrl) throw new Error("応答にturn:/turns:のURLが含まれていません");
+
+    return json({ iceServers, relay: true }, 200, cors);
+  } catch (err) {
+    console.error("TURNクレデンシャル発行に失敗、STUNのみで応答:", err.message);
+    return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
@@ -202,12 +260,24 @@ export default {
       return json({ error: "許可されていないオリジンです" }, 403, cors);
     }
 
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    const { pathname } = new URL(request.url);
+
+    if (pathname === "/api/ice") {
+      if (request.method !== "GET") {
+        return json({ error: "GETのみ対応しています" }, 405, cors);
+      }
+      if (!checkRateLimit(`ice:${ip}`, ICE_RATE_LIMIT_MAX)) {
+        return json({ error: "リクエストが多すぎます。しばらく待ってください。" }, 429, cors);
+      }
+      return handleIce(env, cors);
+    }
+
     if (request.method !== "POST") {
       return json({ error: "POSTのみ対応しています" }, 405, cors);
     }
 
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    if (!checkRateLimit(ip)) {
+    if (!checkRateLimit(`translate:${ip}`, RATE_LIMIT_MAX)) {
       return json({ error: "リクエストが多すぎます。しばらく待ってください。" }, 429, cors);
     }
 

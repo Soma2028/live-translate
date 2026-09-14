@@ -845,18 +845,30 @@ try {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// TURNサーバーの設定。Metered社のOpen Relay Project（無料・公開クレデンシャル）を使用。
-// NAT越え等でSTUNだけでは繋がらない場合のフォールバック。
-const TURN_SERVERS = [
-  { urls: "turn:global.relay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
-];
+// TURN/ICEサーバーの設定。Cloudflare Realtime TURNは固定クレデンシャルを
+// 発行できない仕様のため、通話のたびにWorker経由（GET /api/ice）で
+// 短命クレデンシャルを取得する。Worker自体に届かない場合（ネットワーク
+// エラー等）でもSTUNだけで通話を試せるよう、フォールバックを用意しておく。
+const STUN_ONLY_FALLBACK = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
 
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  ...TURN_SERVERS
-];
+async function fetchIceServers() {
+  try {
+    const res = await fetch(`${TRANSLATE_WORKER_URL}/api/ice`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.relay) {
+      // 中継なしでも直接つながるケースはあるので通話自体は続けるが、
+      // 対称NAT環境だと繋がらない可能性があることは分かるようにしておく。
+      console.warn("TURN中継が利用できません。STUNのみで接続を試みます。");
+    }
+    return Array.isArray(data.iceServers) && data.iceServers.length > 0
+      ? data.iceServers
+      : STUN_ONLY_FALLBACK;
+  } catch (err) {
+    console.warn("ICEサーバー情報の取得に失敗、STUNのみで続行します:", err.message);
+    return STUN_ONLY_FALLBACK;
+  }
+}
 
 /* ---------- 通話の状態 ---------- */
 
@@ -1589,7 +1601,8 @@ async function connect() {
     roomDisconnect = onDisconnect(roomRef);
     roomDisconnect.remove().catch(() => {});
 
-    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const iceServers = await fetchIceServers();
+    pc = new RTCPeerConnection({ iceServers });
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
     pc.ontrack = (e) => {
