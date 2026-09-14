@@ -43,7 +43,7 @@
     font-size: 14px;
     padding: 7px 10px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 10px;
     background: var(--surface);
     color: var(--ink);
   }
@@ -172,7 +172,7 @@
   .turn {
     position: relative;
     background: var(--surface);
-    border-radius: 8px;
+    border-radius: 14px;
     padding: 10px 14px;
     max-width: 68ch;
     display: flex;
@@ -200,14 +200,14 @@
      flex-directionの向きだけで見た目の左右を切り替える。            */
   .turn.own {
     border-right: 3px solid var(--turn-color);
-    border-radius: 8px 0 0 8px;
+    border-radius: 14px 4px 4px 14px;
     align-self: flex-end;
     flex-direction: row-reverse;
     text-align: right;
   }
   .turn.peer {
     border-left: 3px solid var(--turn-color);
-    border-radius: 0 8px 8px 0;
+    border-radius: 4px 14px 14px 4px;
     align-self: flex-start;
     flex-direction: row;
   }
@@ -243,7 +243,7 @@
   #interim {
     background: var(--surface);
     border-right: 3px dashed var(--line);
-    border-radius: 8px 0 0 8px;
+    border-radius: 14px 4px 4px 14px;
     padding: 10px 14px;
     color: var(--muted);
     font-size: 16px;
@@ -270,14 +270,14 @@
     font-size: 14px;
     padding: 7px 10px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 10px;
     background: var(--surface);
     color: var(--ink);
   }
 
   #logViewDialog {
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 14px;
     padding: 0;
     width: min(560px, 92vw);
     max-height: 80vh;
