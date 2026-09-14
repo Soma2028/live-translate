@@ -2254,6 +2254,12 @@ function deleteOwnTurn(turn) {
 
 // Escキーで直前の自分の字幕を削除する。話しながらマウスを狙わずに消せるように。
 // 入力欄にフォーカスがあるときはEscの本来の動作（フォーカス解除など）を優先する。
+function deleteLastOwnTurn() {
+  const ownTurns = el.log.querySelectorAll(".turn.own");
+  const lastOwn = ownTurns[ownTurns.length - 1];
+  if (lastOwn) deleteOwnTurn(lastOwn);
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (el.logViewDialog.open) return; // ログダイアログはネイティブの閉じる動作に任せる
@@ -2261,9 +2267,7 @@ document.addEventListener("keydown", (e) => {
   const active = document.activeElement;
   if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
 
-  const ownTurns = el.log.querySelectorAll(".turn.own");
-  const lastOwn = ownTurns[ownTurns.length - 1];
-  if (lastOwn) deleteOwnTurn(lastOwn);
+  deleteLastOwnTurn();
 });
 
 // 4分サイクルのオーバーラップ中、新旧2つの認識インスタンスが同じ発話を
@@ -2374,12 +2378,14 @@ el.textInput.addEventListener("keydown", (e) => {
   if (e.isComposing || e.keyCode === 229) return;
 
   if (e.key === "Escape") {
-    // 入力欄でのEscは「直前の字幕を削除」ではなく、入力のクリアに使う
+    // 入力欄に文字があればクリア、空なら直前の自分の字幕を削除する
     // （documentのEscハンドラはフォーカスがinput/textarea/selectのときは
     //   何もしないようになっているので、ここで独自に処理する）。
     if (el.textInput.value) {
       e.preventDefault();
       el.textInput.value = "";
+    } else {
+      deleteLastOwnTurn();
     }
     return;
   }
