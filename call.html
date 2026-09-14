@@ -240,24 +240,6 @@
     border-radius: 999px;
   }
 
-  /* 発話中インジケーター。吹き出し（.turn）と同じ形・向きだが、
-     中身はアイコン＋タイピングドットだけの小さなプレースホルダ。 */
-  .speaking-indicator { padding: 6px 12px; }
-  .typing-dots { display: inline-flex; align-items: center; gap: 3px; }
-  .typing-dots span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--muted);
-    animation: typing-bounce 1.2s infinite ease-in-out;
-  }
-  .typing-dots span:nth-child(2) { animation-delay: .2s; }
-  .typing-dots span:nth-child(3) { animation-delay: .4s; }
-  @keyframes typing-bounce {
-    0%, 60%, 100% { transform: translateY(0); opacity: .4; }
-    30% { transform: translateY(-3px); opacity: 1; }
-  }
-
   #interim {
     background: var(--surface);
     border-right: 3px dashed var(--line);
@@ -1110,12 +1092,6 @@ function tickMicMeter() {
 
   el.micMeterFill.style.width = `${Math.round(level * 100)}%`;
 
-  if (level > SPEAKING_THRESHOLD) {
-    showOwnSpeaking();
-  } else {
-    hideOwnSpeakingAfterDelay();
-  }
-
   // 毎フレーム送るとDataChannelが詰まるので、200msに1回程度まで間引く。
   const now = Date.now();
   if (now - lastMicLevelSentAt >= MIC_LEVEL_SEND_INTERVAL_MS) {
@@ -1139,7 +1115,6 @@ function stopMicMeter() {
   micDataArray = null;
   lastMicLevelSentAt = 0;
   el.micMeterFill.style.width = "0%";
-  hideOwnSpeakingImmediately();
 }
 
 /* ---------- 接続・切断の効果音 ---------- */
@@ -1512,12 +1487,6 @@ function handlePeerMessage(msg) {
     el.peerMicMeter.classList.remove("unknown");
     const level = Math.min(1, Math.max(0, msg.level || 0));
     el.peerMicMeterFill.style.width = `${Math.round(level * 100)}%`;
-
-    if (level > SPEAKING_THRESHOLD) {
-      showPeerSpeaking();
-    } else {
-      hidePeerSpeakingAfterDelay();
-    }
   }
 }
 
@@ -1533,13 +1502,11 @@ function startPeerMicWatchdog() {
   peerMicLevelLastReceived = 0;
   el.peerMicMeter.classList.add("unknown");
   el.peerMicMeterFill.style.width = "0%";
-  hidePeerSpeakingImmediately();
 
   clearInterval(peerMicWatchdogInterval);
   peerMicWatchdogInterval = setInterval(() => {
     if (Date.now() - peerMicLevelLastReceived > PEER_MIC_TIMEOUT_MS) {
       el.peerMicMeter.classList.add("unknown");
-      hidePeerSpeakingImmediately();
     }
   }, 1000);
 }
@@ -1550,7 +1517,6 @@ function stopPeerMicWatchdog() {
   peerMicLevelLastReceived = 0;
   el.peerMicMeter.classList.add("unknown");
   el.peerMicMeterFill.style.width = "0%";
-  hidePeerSpeakingImmediately();
 }
 
 /* ---------- 通話の接続 ---------- */
@@ -2076,92 +2042,6 @@ async function drain() {
 const interimEl = document.createElement("div");
 interimEl.id = "interim";
 
-/* ---------- 発話中インジケーター ---------- */
-/* 字幕エリア最下部に、話している側だけタイピングドットを出す。
-   peerSpeakingEl・ownSpeakingElは常にDOMへ先に追加しておき（hiddenで
-   隠すだけ）、新しい字幕は必ずこの2つより前に挿入する。interimEl は
-   showInterim() 内でappendされるたびに末尾へ移動するので、結果として
-   常に [...字幕, peerSpeakingEl, ownSpeakingEl, interimEl] の順になる。 */
-
-function createSpeakingIndicator(side) {
-  const el2 = document.createElement("div");
-  el2.className = `turn ${side} speaking-indicator`;
-  el2.hidden = true;
-
-  const avatar = document.createElement("div");
-  avatar.className = "avatar";
-
-  const dots = document.createElement("span");
-  dots.className = "typing-dots";
-  dots.append(document.createElement("span"), document.createElement("span"), document.createElement("span"));
-
-  el2.append(avatar, dots);
-  return { el: el2, avatar };
-}
-
-const peerSpeaking = createSpeakingIndicator("peer");
-const ownSpeaking = createSpeakingIndicator("own");
-el.log.append(peerSpeaking.el, ownSpeaking.el);
-
-const SPEAKING_THRESHOLD = 0.15; // これを超えたら「話している」とみなす（あとで調整可）
-const SPEAKING_SILENCE_MS = 1000; // 無音がこれだけ続いたら消す
-
-let ownSpeakingSilenceTimer = null;
-
-function showOwnSpeaking() {
-  clearTimeout(ownSpeakingSilenceTimer);
-  ownSpeakingSilenceTimer = null;
-  if (!ownSpeaking.el.hidden) return;
-  const conf = LANGS[el.direction.value];
-  ownSpeaking.el.style.setProperty("--turn-color", conf.color);
-  ownSpeaking.avatar.textContent = conf.code;
-  ownSpeaking.el.hidden = false;
-  el.log.scrollTop = el.log.scrollHeight;
-}
-
-function hideOwnSpeakingAfterDelay() {
-  if (ownSpeakingSilenceTimer || ownSpeaking.el.hidden) return;
-  ownSpeakingSilenceTimer = setTimeout(() => {
-    ownSpeaking.el.hidden = true;
-    ownSpeakingSilenceTimer = null;
-  }, SPEAKING_SILENCE_MS);
-}
-
-function hideOwnSpeakingImmediately() {
-  clearTimeout(ownSpeakingSilenceTimer);
-  ownSpeakingSilenceTimer = null;
-  ownSpeaking.el.hidden = true;
-}
-
-let peerSpeakingSilenceTimer = null;
-
-function showPeerSpeaking() {
-  clearTimeout(peerSpeakingSilenceTimer);
-  peerSpeakingSilenceTimer = null;
-  if (!peerSpeaking.el.hidden) return;
-  // 相手の言語は、自分が選んでいる方向の逆になる（この通話アプリはJA⇔KOの2人用）。
-  const peerDirection = el.direction.value === "ja-ko" ? "ko-ja" : "ja-ko";
-  const conf = LANGS[peerDirection];
-  peerSpeaking.el.style.setProperty("--turn-color", conf.color);
-  peerSpeaking.avatar.textContent = conf.code;
-  peerSpeaking.el.hidden = false;
-  el.log.scrollTop = el.log.scrollHeight;
-}
-
-function hidePeerSpeakingAfterDelay() {
-  if (peerSpeakingSilenceTimer || peerSpeaking.el.hidden) return;
-  peerSpeakingSilenceTimer = setTimeout(() => {
-    peerSpeaking.el.hidden = true;
-    peerSpeakingSilenceTimer = null;
-  }, SPEAKING_SILENCE_MS);
-}
-
-function hidePeerSpeakingImmediately() {
-  clearTimeout(peerSpeakingSilenceTimer);
-  peerSpeakingSilenceTimer = null;
-  peerSpeaking.el.hidden = true;
-}
-
 // interim（暫定認識結果）が1.2秒変化しなかったら、確定を待たずに
 // 先出しで翻訳を始める。字幕の遅延を減らすための先読み。
 // 正式なfinalが来たときの答え合わせは handleFinal 側で行う。
@@ -2194,7 +2074,7 @@ function addSystemMessage(text) {
   msg.className = "system-msg";
   msg.textContent = text;
 
-  el.log.insertBefore(msg, peerSpeaking.el);
+  el.log.insertBefore(msg, interimEl.parentNode === el.log ? interimEl : null);
   el.log.scrollTop = el.log.scrollHeight;
 }
 
@@ -2234,7 +2114,7 @@ function addTurn(srcText, conf, isPeer = false) {
     turn.appendChild(deleteBtn);
   }
 
-  el.log.insertBefore(turn, peerSpeaking.el);
+  el.log.insertBefore(turn, interimEl.parentNode === el.log ? interimEl : null);
 
   // 長時間の通話でDOMが膨らむのを防ぐ
   const turns = el.log.querySelectorAll(".turn");
