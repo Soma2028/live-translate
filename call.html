@@ -595,6 +595,7 @@ const I18N = {
     fontSizeLarge: "大",
     textInputPlaceholder: "音声が届かないときはここに入力",
     logInputTag: "入力",
+    logEngineFixed: "定型",
     connectBtn: "つなぐ",
     hangupBtn: "切る",
     startBtn: "開始",
@@ -674,6 +675,7 @@ const I18N = {
     fontSizeLarge: "크게",
     textInputPlaceholder: "음성이 안 들릴 때는 여기에 입력",
     logInputTag: "입력",
+    logEngineFixed: "고정",
     connectBtn: "연결",
     hangupBtn: "끊기",
     startBtn: "시작",
@@ -1273,14 +1275,14 @@ function persistCallLog(log) {
   }
 }
 
-function logSubtitle(id, speaker, src, dst, inputMethod = "voice") {
+function logSubtitle(id, speaker, src, dst, inputMethod = "voice", engine = null) {
   const log = loadCallLog();
   const dateKey = localDateKey();
   if (!log[dateKey]) log[dateKey] = [];
 
   const entries = log[dateKey];
   const existingIndex = entries.findIndex(e => e.id === id);
-  const entry = { id, time: Date.now(), speaker, src, dst, inputMethod };
+  const entry = { id, time: Date.now(), speaker, src, dst, inputMethod, engine };
   if (existingIndex >= 0) {
     entries[existingIndex] = entry;
   } else {
@@ -1305,13 +1307,24 @@ function deleteLogEntry(id) {
   if (changed) persistCallLog(log);
 }
 
+// [入力]（テキスト入力由来）・[AI]/[Azure]/[定型]（翻訳エンジン）のタグを
+// 組み立てる。ログ一覧・コピーテキストの両方で使う。
+function buildLogTags(e) {
+  const tags = [];
+  if (e.inputMethod === "typed") tags.push(t("logInputTag"));
+  if (e.engine === "workers-ai") tags.push("AI");
+  else if (e.engine === "azure") tags.push("Azure");
+  else if (e.engine === "fixed") tags.push(t("logEngineFixed"));
+  if (tags.length === 0) return "";
+  return tags.map(tag => `[${tag}]`).join(" ") + " ";
+}
+
 function formatLogDayAsText(dateKey, entries) {
   const locale = currentLang === "ko" ? "ko-KR" : "ja-JP";
   const lines = entries.map(e => {
     const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
     const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
-    const tag = e.inputMethod === "typed" ? `[${t("logInputTag")}] ` : "";
-    return `${time} ${speakerLabel}: ${tag}${e.src} → ${e.dst}`;
+    return `${time} ${speakerLabel}: ${buildLogTags(e)}${e.src} → ${e.dst}`;
   });
   return `[${dateKey}]\n${lines.join("\n")}`;
 }
@@ -1371,8 +1384,7 @@ function renderLogDialog() {
       entryEl.className = "log-entry";
       const time = new Date(e.time).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
       const speakerLabel = t(e.speaker === "own" ? "logSpeakerOwn" : "logSpeakerPeer");
-      const tag = e.inputMethod === "typed" ? `[${t("logInputTag")}] ` : "";
-      entryEl.textContent = `${time} ${speakerLabel}: ${tag}${e.src} → ${e.dst}`;
+      entryEl.textContent = `${time} ${speakerLabel}: ${buildLogTags(e)}${e.src} → ${e.dst}`;
       entriesEl.appendChild(entryEl);
     }
 
@@ -1504,7 +1516,7 @@ function handlePeerMessage(msg) {
     entry.dst.textContent = msg.text;
     el.log.scrollTop = el.log.scrollHeight;
     const srcEl = entry.dst.previousElementSibling;
-    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", msg.text, entry.inputMethod);
+    logSubtitle(msg.id, "peer", srcEl ? srcEl.textContent : "", msg.text, entry.inputMethod, msg.engine || null);
     pushConversationContext(srcEl ? srcEl.textContent : "", msg.text);
   } else if (msg.kind === "subtitle-failed") {
     const entry = peerPending.get(msg.id);
@@ -2048,7 +2060,7 @@ async function translate(text, direction, context) {
     if (res.ok) {
       const data = await res.json();
       if (!data.text) throw new Error("EMPTY_RESPONSE");
-      return data.text;
+      return { text: data.text, engine: data.engine || null };
     }
 
     if ((res.status === 429 || res.status === 503) && attempt === 0) {
@@ -2211,8 +2223,8 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID(), inputM
   if (fixedTranslation !== null) {
     dst.className = "dst";
     dst.textContent = fixedTranslation;
-    sendToPeer({ kind: "subtitle-translated", id, text: fixedTranslation });
-    logSubtitle(id, "own", text, fixedTranslation, inputMethod);
+    sendToPeer({ kind: "subtitle-translated", id, text: fixedTranslation, engine: "fixed" });
+    logSubtitle(id, "own", text, fixedTranslation, inputMethod, "fixed");
     pushConversationContext(text, fixedTranslation);
     el.log.scrollTop = el.log.scrollHeight;
     return id;
@@ -2225,11 +2237,11 @@ function translateAndSend(text, direction, dst, id = crypto.randomUUID(), inputM
 
   enqueue(async () => {
     try {
-      const out = await translate(text, direction, conversationContext);
+      const { text: out, engine } = await translate(text, direction, conversationContext);
       dst.className = "dst";
       dst.textContent = out;
-      sendToPeer({ kind: "subtitle-translated", id, text: out });
-      logSubtitle(id, "own", text, out, inputMethod);
+      sendToPeer({ kind: "subtitle-translated", id, text: out, engine });
+      logSubtitle(id, "own", text, out, inputMethod, engine);
       pushConversationContext(text, out);
     } catch (err) {
       dst.className = "dst failed";
