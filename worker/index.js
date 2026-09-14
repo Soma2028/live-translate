@@ -206,12 +206,13 @@ async function translateWithAzure(env, text, from, to, context) {
 // 動いてしまう事故を防ぐため、検証だけは厳しくする）。
 async function handleIce(env, cors) {
   if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
-    console.warn("TURN_KEY_ID/TURN_KEY_API_TOKENが未設定のため、STUNのみで応答します");
+    console.warn("ice: TURN_KEY_ID/TURN_KEY_API_TOKENが未設定のため、STUNのみで応答します");
     return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
   }
 
+  let res;
   try {
-    const res = await fetch(
+    res = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
       {
         method: "POST",
@@ -222,27 +223,43 @@ async function handleIce(env, cors) {
         body: JSON.stringify({ ttl: TURN_TTL_SECONDS })
       }
     );
-
-    if (!res.ok) throw new Error(`Cloudflare Realtime TURN error: HTTP ${res.status}`);
-
-    const data = await res.json();
-    // 応答のiceServersは配列で返る場合と単一オブジェクトの場合があるため、
-    // 呼び出し側が扱いやすいよう配列に正規化しておく。
-    const iceServers = Array.isArray(data?.iceServers)
-      ? data.iceServers
-      : data?.iceServers ? [data.iceServers] : [];
-
-    const hasTurnUrl = iceServers.some(server => {
-      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-      return urls.some(u => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
-    });
-    if (!hasTurnUrl) throw new Error("応答にturn:/turns:のURLが含まれていません");
-
-    return json({ iceServers, relay: true }, 200, cors);
   } catch (err) {
-    console.error("TURNクレデンシャル発行に失敗、STUNのみで応答:", err.message);
+    // fetch自体が例外を投げるのはネットワーク障害など。トークン失効時は
+    // 後続のHTTPステータス確認の方に引っかかる。
+    console.warn("ice: TURNクレデンシャルの発行リクエストが失敗、STUNのみで応答:", err.message);
     return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
   }
+
+  if (!res.ok) {
+    console.warn(`ice: TURNクレデンシャルの発行に失敗（HTTP ${res.status}）、STUNのみで応答`);
+    return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    console.warn("ice: TURNクレデンシャル応答のJSON解析に失敗、STUNのみで応答:", err.message);
+    return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
+  }
+
+  // 応答のiceServersは配列で返る場合と単一オブジェクトの場合があるため、
+  // 呼び出し側が扱いやすいよう配列に正規化しておく。
+  const iceServers = Array.isArray(data?.iceServers)
+    ? data.iceServers
+    : data?.iceServers ? [data.iceServers] : [];
+
+  const hasTurnUrl = iceServers.some(server => {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+    return urls.some(u => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+  });
+  if (!hasTurnUrl) {
+    console.warn("ice: 応答にturn:/turns:のURLが含まれておらず検証失敗、STUNのみで応答");
+    return json({ iceServers: STUN_ONLY, relay: false }, 200, cors);
+  }
+
+  console.log(`ice issued ttl=${TURN_TTL_SECONDS}`);
+  return json({ iceServers, relay: true }, 200, cors);
 }
 
 export default {
