@@ -174,7 +174,21 @@
     flex-direction: column;
     gap: 14px;
   }
-  .empty { color: var(--muted); font-size: 15px; margin: auto; text-align: center; }
+  .empty {
+    color: var(--muted);
+    font-size: 15px;
+    margin: auto;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .empty::before {
+    content: "💬";
+    font-size: 34px;
+    opacity: .7;
+  }
 
   audio#remoteAudio { display: none; }
 
@@ -418,7 +432,7 @@
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
 
 <main id="log">
-  <p class="empty">「つなぐ」で通話、「開始」で自分の字幕が出ます。</p>
+  <p class="empty">リンクを送って、相手が来るのをのんびり待とう。</p>
 </main>
 
 <div id="textInputRow" hidden>
@@ -628,8 +642,8 @@ const I18N = {
     sttUnsupported: "この端末では音声認識が使えません。Chrome か Edge で開いてください。",
     noMic: "マイクが見つかりません。接続を確認してください。",
     cannotStart: "開始できません。一度停止してから押し直してください。",
-    logEmptyPrecall: "リンクを送って、相手が参加するのを待ちましょう。",
-    logEmptyIncall: "「開始」を押して話すと、ここに字幕が出ます。",
+    logEmptyPrecall: "リンクを送って、相手が来るのをのんびり待とう。",
+    logEmptyIncall: "「開始」を押して話してみて。ここに字幕が出てくるよ。",
     hint: "自分のマイクだけを認識します。相手の声は認識しません。",
     escHint: "Escキーで直前の字幕を取り消せます。",
     translating: "翻訳中…",
@@ -705,8 +719,8 @@ const I18N = {
     sttUnsupported: "이 기기에서는 음성 인식을 사용할 수 없습니다. Chrome이나 Edge에서 열어주세요.",
     noMic: "마이크를 찾을 수 없습니다. 연결을 확인해주세요.",
     cannotStart: "시작할 수 없습니다. 한 번 정지한 후 다시 눌러주세요.",
-    logEmptyPrecall: "링크를 보내고 상대방이 참여하기를 기다리세요.",
-    logEmptyIncall: "[시작]을 누르고 말하면 여기에 자막이 나옵니다.",
+    logEmptyPrecall: "링크를 보내고 느긋하게 기다려봐요.",
+    logEmptyIncall: "[시작]을 누르고 말해봐요. 여기에 자막이 뜰 거예요.",
     hint: "자신의 마이크만 인식합니다. 상대방의 음성은 인식하지 않습니다.",
     escHint: "Esc 키로 직전 자막을 취소할 수 있어요.",
     translating: "번역 중…",
