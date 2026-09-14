@@ -1027,6 +1027,7 @@ function updateLastCallDisplay() {
 }
 
 function resetUI() {
+  debugLog("resetUI呼び出し", new Error().stack);
   el.connectBtn.disabled = false;
   el.roomInput.disabled = false;
   el.createRoomBtn.disabled = false;
@@ -1405,6 +1406,7 @@ function markPeerJoined() {
   // 発火しないことがあるため、相手の音量バーの表示はこちらを正とする。
   // 自分の音量バーはマイク取得時点（connect内）で先に表示済み。
   el.peerMicMeterGroup.hidden = false;
+  debugLog("peerMicMeterGroup.hidden = false (markPeerJoined)", el.peerMicMeterGroup.hidden);
 }
 
 function markPeerLeft() {
@@ -1560,7 +1562,9 @@ async function connect() {
     // マイク取得できた時点で自分の音量バーだけ先に表示する。
     // 相手側のバーはこれまで通りmarkPeerJoinedで表示する。
     el.micMeterGroup.hidden = false;
+    debugLog("micMeterGroup.hidden = false (getUserMedia成功)", el.micMeterGroup.hidden);
   } catch (err) {
+    debugLog("getUserMedia失敗 -> resetUI", err);
     setError("micDenied");
     resetUI();
     return;
@@ -1573,6 +1577,7 @@ async function connect() {
     const roomData = snap.val();
 
     if (roomData && roomData.offer && roomData.answer) {
+      debugLog("alreadyTwo -> resetUI", roomData);
       setError("alreadyTwo");
       stopMicMeter();
       localStream.getTracks().forEach(t => t.stop());
@@ -1680,6 +1685,7 @@ async function connect() {
       });
     }
   } catch (err) {
+    debugLog("connect()内catch -> resetUI", err);
     if (isPermissionDenied(err)) {
       setError("roomIdTooShort");
     } else {
