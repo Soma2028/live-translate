@@ -120,6 +120,10 @@
   /* 3秒以上mic-levelが届かないときは「不明」として薄く表示する */
   #peerMicMeter.unknown { opacity: .35; }
 
+  /* 自分（マイク）・相手（人）を音量バーの左のアイコンで区別する */
+  .mic-row { display: inline-flex; align-items: center; gap: 4px; }
+  .mic-icon { flex: none; color: var(--muted); }
+
   #callInfo {
     font-size: 12px;
     color: var(--muted);
@@ -360,13 +364,32 @@
       <option id="fontSizeOptMedium" value="medium" selected>中</option>
       <option id="fontSizeOptLarge" value="large">大</option>
     </select>
+
+    <div id="usageInfo">今月 0 / 2,000,000 文字</div>
   </div>
 
   <button id="connectBtn">つなぐ</button>
 
   <span id="callTimer" hidden>00:00</span>
-  <div id="micMeter" hidden><div id="micMeterFill"></div></div>
-  <div id="peerMicMeter" class="unknown" hidden><div id="peerMicMeterFill"></div></div>
+
+  <span class="mic-row" id="micMeterGroup" hidden>
+    <svg class="mic-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <rect x="9" y="2" width="6" height="12" rx="3"/>
+      <path d="M5 10a7 7 0 0 0 14 0"/>
+      <line x1="12" y1="17" x2="12" y2="21"/>
+      <line x1="8" y1="21" x2="16" y2="21"/>
+    </svg>
+    <div id="micMeter"><div id="micMeterFill"></div></div>
+  </span>
+
+  <span class="mic-row" id="peerMicMeterGroup" hidden>
+    <svg class="mic-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/>
+    </svg>
+    <div id="peerMicMeter" class="unknown"><div id="peerMicMeterFill"></div></div>
+  </span>
+
   <button id="toggle" hidden>開始</button>
   <button id="hangupBtn" class="hangup" hidden disabled>切る</button>
   <button id="settingsBtn" type="button" hidden>⚙</button>
@@ -391,7 +414,6 @@
 <div id="status">合言葉を入力して「つなぐ」を押してください。</div>
 <div id="lastCallInfo" hidden></div>
 <div id="callInfo">役割: - ・ 接続: - ・ ICE: -</div>
-<div id="usageInfo">今月 0 / 2,000,000 文字</div>
 <div id="sttStatus">マイクの許可が必要です。Chrome または Edge で開いてください。</div>
 
 <main id="log">
@@ -765,8 +787,10 @@ const el = {
   status: document.getElementById("status"),
   callInfo: document.getElementById("callInfo"),
   lastCallInfo: document.getElementById("lastCallInfo"),
+  micMeterGroup: document.getElementById("micMeterGroup"),
   micMeter: document.getElementById("micMeter"),
   micMeterFill: document.getElementById("micMeterFill"),
+  peerMicMeterGroup: document.getElementById("peerMicMeterGroup"),
   peerMicMeter: document.getElementById("peerMicMeter"),
   peerMicMeterFill: document.getElementById("peerMicMeterFill"),
   usageInfo: document.getElementById("usageInfo"),
@@ -788,9 +812,20 @@ el.callInfo.hidden = !DEBUG;
 let statusState = { key: "statusInitial", params: {}, cls: "" };
 let sttState = { key: "sttInitial", params: {}, cls: "" };
 
+// 通話中は「エラー」と「接続処理中」だけを表示し、それ以外（接続済み、
+// 認識中など普段どおりの状態）は場所を取らないよう1行ぶん消す。
+// 接続前はこれまでどおり常に表示する。
 function renderStatus() {
-  el.status.textContent = t(statusState.key, statusState.params);
-  el.status.className = statusState.cls;
+  const { key, cls } = statusState;
+  const isError = cls === "error";
+  const isConnectingProgress = key === "micPreparing" || key === "signaling" ||
+    (key === "connStateMsg" && connState !== "connected");
+  const visible = uiPhase !== "incall" || isError || isConnectingProgress;
+
+  el.status.hidden = !visible;
+  if (!visible) return;
+  el.status.textContent = t(key, statusState.params);
+  el.status.className = cls;
 }
 
 function setStatus(key, params = {}, cls = "") {
@@ -802,7 +837,12 @@ function setError(key, params = {}) {
   setStatus(key, params, "error");
 }
 
+// STTの状態行はエラー（マイク拒否・非対応など）のときだけ表示する。
+// 「認識中」「再接続中」のような普段どおりの状態は表示しない。
 function renderSttStatus() {
+  const visible = sttState.cls === "error";
+  el.sttStatus.hidden = !visible;
+  if (!visible) return;
   el.sttStatus.textContent = t(sttState.key, sttState.params);
   el.sttStatus.className = sttState.cls;
 }
@@ -935,8 +975,8 @@ function updatePhaseUI() {
   el.connectBtn.hidden = inCall;
 
   el.callTimer.hidden = !inCall;
-  el.micMeter.hidden = !inCall;
-  el.peerMicMeter.hidden = !inCall;
+  el.micMeterGroup.hidden = !inCall;
+  el.peerMicMeterGroup.hidden = !inCall;
   el.toggle.hidden = !inCall;
   el.hangupBtn.hidden = !inCall;
   el.settingsBtn.hidden = !inCall;
@@ -949,6 +989,8 @@ function updatePhaseUI() {
   updateLogPlaceholder();
   updateLastCallDisplay();
   updateHintText();
+  renderStatus();
+  renderSttStatus();
 }
 
 el.settingsBtn.addEventListener("click", () => {
@@ -2474,9 +2516,20 @@ function updateLogPlaceholder() {
   emptyEl.textContent = t(uiPhase === "incall" ? "logEmptyIncall" : "logEmptyPrecall");
 }
 
+// 接続前は従来どおりのヒントを常時表示する。通話中のEscの案内は、
+// 一度読めば十分な情報なので、入力欄にフォーカスがあるときだけ出す。
 function updateHintText() {
-  el.hint.textContent = t(uiPhase === "incall" ? "escHint" : "hint");
+  if (uiPhase === "incall") {
+    el.hint.textContent = t("escHint");
+    el.hint.hidden = document.activeElement !== el.textInput;
+  } else {
+    el.hint.textContent = t("hint");
+    el.hint.hidden = false;
+  }
 }
+
+el.textInput.addEventListener("focus", updateHintText);
+el.textInput.addEventListener("blur", updateHintText);
 
 el.uiLang.addEventListener("change", () => {
   currentLang = el.uiLang.value;
