@@ -43,10 +43,25 @@ const LANG_NAMES_JA = { ja: "日本語", ko: "韓国語" };
 // prefix（"translate:"/"ice:"）を付けて別枠でカウントする。
 const rateLimitMap = new Map(); // key -> { count, windowStart }
 
+// 窓を過ぎたエントリはIPが二度とアクセスしてこない限り残り続け、
+// URL漏洩などで大量のIPからアクセスされた場合にメモリが際限なく
+// 増えてしまう。リクエストのたびに掃除する（この規模のMapなら
+// 全走査してもコストは小さく、間隔を空ける必要はない）。
+function pruneRateLimitMap(now) {
+  for (const [key, entry] of rateLimitMap) {
+    if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+      rateLimitMap.delete(key);
+    }
+  }
+}
+
 function checkRateLimit(key, max) {
   const now = Date.now();
+  pruneRateLimitMap(now);
+
+  // 掃除後なので、ここに残っているエントリは全て窓の中にある。
   const entry = rateLimitMap.get(key);
-  if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+  if (!entry) {
     rateLimitMap.set(key, { count: 1, windowStart: now });
     return true;
   }
