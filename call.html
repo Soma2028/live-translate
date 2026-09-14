@@ -952,8 +952,12 @@ function updatePhaseUI() {
   el.connectBtn.hidden = inCall;
 
   el.callTimer.hidden = !inCall;
-  el.micMeterGroup.hidden = !inCall;
-  el.peerMicMeterGroup.hidden = !inCall;
+  // 音量バーはuiPhaseだけでは出さない。接続確立(onconnectionstatechangeの
+  // "connected")まで隠したままにし、通話終了時はここで確実に隠す。
+  if (!inCall) {
+    el.micMeterGroup.hidden = true;
+    el.peerMicMeterGroup.hidden = true;
+  }
   el.toggle.hidden = !inCall;
   el.hangupBtn.hidden = !inCall;
   el.settingsBtn.hidden = !inCall;
@@ -1589,9 +1593,13 @@ async function connect() {
 
       if (connState === "connected") {
         startCallTimer();
+        el.micMeterGroup.hidden = false;
+        el.peerMicMeterGroup.hidden = false;
       }
       if (connState === "disconnected" || connState === "failed" || connState === "closed") {
         markPeerLeft();
+        el.micMeterGroup.hidden = true;
+        el.peerMicMeterGroup.hidden = true;
       }
     };
 
