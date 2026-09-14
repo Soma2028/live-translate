@@ -1400,6 +1400,11 @@ function markPeerJoined() {
   peerJoined = true;
   addSystemMessage(t("peerJoined"));
   playJoinSound();
+  // DataChannelが開通した時点をもって「通話が確立した」とみなす。
+  // pc.connectionStateはブラウザによって"connected"への遷移が遅れたり
+  // 発火しないことがあるため、音量バーの表示はこちらを正とする。
+  el.micMeterGroup.hidden = false;
+  el.peerMicMeterGroup.hidden = false;
 }
 
 function markPeerLeft() {
@@ -1407,6 +1412,8 @@ function markPeerLeft() {
   peerJoined = false;
   addSystemMessage(t("peerLeft"));
   playLeaveSound();
+  el.micMeterGroup.hidden = true;
+  el.peerMicMeterGroup.hidden = true;
 }
 
 /* ---------- DataChannel: 字幕の送受信 ---------- */
@@ -1594,13 +1601,9 @@ async function connect() {
 
       if (connState === "connected") {
         startCallTimer();
-        el.micMeterGroup.hidden = false;
-        el.peerMicMeterGroup.hidden = false;
       }
       if (connState === "disconnected" || connState === "failed" || connState === "closed") {
         markPeerLeft();
-        el.micMeterGroup.hidden = true;
-        el.peerMicMeterGroup.hidden = true;
       }
     };
 
