@@ -54,8 +54,17 @@
     background: var(--ink);
     color: var(--surface);
     font-weight: 500;
+    transition: transform .15s ease, box-shadow .15s ease;
   }
   button:disabled { opacity: .4; cursor: default; }
+  button:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(22, 32, 42, .18);
+  }
+  button:not(:disabled):active {
+    transform: translateY(1px);
+    box-shadow: none;
+  }
   button.hangup { background: var(--warn); border-color: var(--warn); }
   button.stop { background: var(--warn); border-color: var(--warn); }
   :focus-visible { outline: 2px solid var(--ja); outline-offset: 2px; }
