@@ -1,12 +1,8 @@
 // Firebaseコンソール > プロジェクトの設定 > 全般 > マイアプリ から
-// ウェブアプリの設定値をコピーしてくる。
-//
-// このファイルをコピーして firebase-config.js を作ること。
-// firebase-config.js は .gitignore 対象なのでコミットされない。
-//
-//   cp firebase-config.example.js firebase-config.js
-//
-// Realtime Database を有効化し、databaseURL も忘れず入れること。
+// ウェブアプリの設定値をコピーしたもの。このファイルはリポジトリに
+// コミットしている（.gitignore対象ではない）。apiKeyはFirebaseの設計上
+// クライアントに露出する前提の値で、実際に読み書きを守っているのは
+// database.rules.json側なので、ここを隠す意味は無い。
 
 export const firebaseConfig = {
   apiKey: "AIzaSyD0C3ikhpynkELhTkt8PCagItolAkcYOLg",
