@@ -7,7 +7,18 @@
     "rooms": {
       "$roomId": {
         ".read": "$roomId.length >= 12",
-        ".write": "$roomId.length >= 12"
+        ".write": "$roomId.length >= 12",
+
+        /* offer/answerは一度書き込まれたら別の内容での上書きを拒否する
+           （通話成立後に第三者が同じroomへ割り込んでSDPをすり替える攻撃を防ぐ）。
+           ただしhangup/onDisconnectによる部屋ごとの削除は引き続き許可する必要が
+           あるため、newDataが存在しない（=削除）場合は素通しする。 */
+        "offer": {
+          ".validate": "!data.exists() || !newData.exists()"
+        },
+        "answer": {
+          ".validate": "!data.exists() || !newData.exists()"
+        }
       }
     }
   }
