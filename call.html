@@ -1930,6 +1930,12 @@ class WebSpeechSTT {
     rec.onstart = () => {
       debugLog("STT start");
       this.onState("sttListening", "live");
+      // onresultだけでなくここでもリセットする。ブラウザが自然に
+      // onendで止まって再起動した場合や4分サイクルの切り替え直後は
+      // onresultがまだ一度も来ていないため、ここでリセットしないと
+      // 無音監視が「再起動前からの無音時間」を引き継いでしまい、
+      // 正当な再起動の直後にさらに無駄な再起動が連鎖してしまう。
+      this.lastResultTime = Date.now();
       clearTimeout(this.cycleTimer);
       this.cycleTimer = setTimeout(() => this._cycle(SR), STT_CYCLE_INTERVAL_MS);
     };
