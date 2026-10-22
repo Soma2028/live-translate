@@ -4,3 +4,4 @@
 *.local
 node_modules/
 .wrangler/
+worker/names.json

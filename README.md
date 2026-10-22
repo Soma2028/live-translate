@@ -101,7 +101,7 @@ fixed-phrases.md             定型フレーズの即答表（call.htmlがfetch�
 worker/
   index.js                   翻訳中継 + TURNクレデンシャル発行のWorker本体
   wrangler.toml               Workerのデプロイ設定（[ai] binding含む）
-  names.json                  固有名詞の日本語↔韓国語表記対応表（Workerが直接import）
+  names.example.json          固有名詞の日本語↔韓国語表記対応表の例。names.jsonにコピーして使う（names.jsonはgit管理外）
 ```
 
 ## 前提として必要なもの
@@ -198,6 +198,14 @@ npx wrangler secret put TURN_KEY_API_TOKEN
 
 ```bash
 npx wrangler secret list
+```
+
+### 固有名詞の対応表
+
+Workerは `worker/names.json` を直接importする。個人名などを含むためgit管理外にしてあるので、例からコピーして自分用に書き換える。
+
+```bash
+cp worker/names.example.json worker/names.json
 ```
 
 ### デプロイ
