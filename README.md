@@ -9,15 +9,17 @@ TURN中継クレデンシャルの発行にCloudflare Workerを使う。
 日本語話者と韓国語話者が、お互いの言葉を話しながら通話できる。話した内容は自分の画面に原文で表示され、
 相手の画面には相手の言語に翻訳された字幕が届く。UIも日本語・韓国語を切り替えられる。
 
+> 対応環境: PCのChrome / Edge（音声認識にWeb Speech APIを使うため。スマホでは動作しない）
+
 ## スクリーンショット
 
 | 通話前（部屋を作ってリンクを送る） | 通話中（認識途中の発話は点線で先に表示） |
 | --- | --- |
 | ![待機画面](docs/screenshots/lobby.png) | ![通話画面（日本語）](docs/screenshots/call-ja.png) |
 
-| 韓国語UI | スマホ幅 |
-| --- | --- |
-| ![通話画面（韓国語）](docs/screenshots/call-ko.png) | <img src="docs/screenshots/call-mobile.png" alt="スマホ幅の通話画面" width="280"> |
+| 韓国語UI |
+| --- |
+| ![通話画面（韓国語）](docs/screenshots/call-ko.png) |
 
 ## 主な機能
 
