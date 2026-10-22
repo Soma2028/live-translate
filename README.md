@@ -4,6 +4,87 @@
 シグナリングにFirebase Realtime Database、音声にWebRTC（P2P）、字幕の翻訳と
 TURN中継クレデンシャルの発行にCloudflare Workerを使う。
 
+![日本語話者と韓国語話者の通話画面](docs/screenshots/hero.png)
+
+日本語話者と韓国語話者が、お互いの言葉を話しながら通話できる。話した内容は自分の画面に原文で表示され、
+相手の画面には相手の言語に翻訳された字幕が届く。UIも日本語・韓国語を切り替えられる。
+
+## スクリーンショット
+
+| 通話前（部屋を作ってリンクを送る） | 通話中（認識途中の発話は点線で先に表示） |
+| --- | --- |
+| ![待機画面](docs/screenshots/lobby.png) | ![通話画面（日本語）](docs/screenshots/call-ja.png) |
+
+| 韓国語UI | スマホ幅 |
+| --- | --- |
+| ![通話画面（韓国語）](docs/screenshots/call-ko.png) | <img src="docs/screenshots/call-mobile.png" alt="スマホ幅の通話画面" width="280"> |
+
+## 主な機能
+
+- **P2P音声通話**: WebRTCで直接つなぎ、NAT越えできないときはCloudflare TURNで中継する
+- **リアルタイム字幕**: ブラウザの音声認識（Web Speech API）で自分の声だけを文字にし、翻訳してDataChannelで相手に送る
+- **先読み翻訳**: 認識途中の文が1.2秒変化しなければ、確定を待たずに翻訳を始めて字幕の遅延を減らす
+- **翻訳エンジンの振り分け**: 短い発話はAzure Translator、長い発話はLLM（Workers AI / Qwen）。失敗したらもう一方へ自動フォールバック
+- **会話文脈・固有名詞対応**: 直前のやりとりを文脈としてLLMに渡し、人名などは対応表（`names.json`）で表記を揃える
+- **誤認識補正と定型文**: `glossary.md` で音声認識の誤りを直し、`fixed-phrases.md` に一致するあいさつ等は翻訳APIを呼ばずに即答する
+- **入力の補助**: 音声が通らないときのテキスト入力、Escキーで直前の字幕を取り消し、自分の発言の削除
+- **リンクで招待**: ランダムなroom IDのリンクと、UI言語（日本語/韓国語）に合わせた招待文をワンクリックでコピー
+- **通話ログ**: 原文・訳文を日付ごとにブラウザ内に保存し、あとから見返し・コピーできる
+- **相手のマイク状態表示**: 自分と相手の音量メーターで「声が届いているか」を確認できる
+
+## 技術スタック
+
+| 役割 | 使用技術 |
+| --- | --- |
+| フロントエンド | 素のHTML/CSS/JavaScript（ビルド不要の単一ファイル）、GitHub Pagesで配信 |
+| 音声通話 | WebRTC（音声トラック + DataChannel） |
+| シグナリング | Firebase Realtime Database（セキュリティルールで書き込みを制限） |
+| 音声認識 | Web Speech API（Chrome / Edge） |
+| 翻訳 | Cloudflare Workers → Azure Translator / Workers AI（Qwen3） |
+| NAT越え | Cloudflare Realtime TURN（通話ごとに短命クレデンシャルを発行） |
+
+## 仕組み
+
+```mermaid
+flowchart LR
+  subgraph A[ブラウザA（日本語）]
+    STT_A[音声認識] --> TR_A[翻訳依頼]
+  end
+  subgraph B[ブラウザB（韓国語）]
+    STT_B[音声認識] --> TR_B[翻訳依頼]
+  end
+  FB[(Firebase RTDB<br>シグナリング)]
+  W[Cloudflare Worker]
+  AZ[Azure Translator]
+  AI[Workers AI / Qwen]
+  TURN[Cloudflare TURN]
+
+  A <-->|offer/answer/ICE| FB
+  B <-->|offer/answer/ICE| FB
+  A <==>|音声 + 字幕 DataChannel| B
+  TR_A --> W
+  TR_B --> W
+  W --> AZ
+  W --> AI
+  W -.->|短命クレデンシャル| TURN
+```
+
+翻訳は**送信側**で行い、訳文をDataChannelで相手に送る（受信側で翻訳するより1往復ぶん遅くなるが、
+話した本人が訳文を確認でき、取り消し・訂正も送信側で完結する）。APIキーはすべてWorker側のシークレットに置き、
+ブラウザには出さない。
+
+## 工夫した点
+
+- **APIキーをクライアントに置かない**: 翻訳APIとTURNのキーはWorkerのシークレットに保持し、許可オリジンとIP単位のレート制限をサーバー側でかける
+- **部屋の乗っ取り対策**: room IDは72ビットの乱数。DBルールでoffer/answerを書き込み1回限りにし、通話成立後のSDPすり替えを防ぐ
+- **後片付け**: `onDisconnect` でタブを閉じただけでも部屋のデータが消える
+- **落ちない設計**: TURN発行に失敗してもSTUNのみで通話を続け、翻訳エンジンが落ちてももう一方に切り替える。音声認識が無音で止まったら自動で再起動する
+- **段階的な検証**: 同じPCの2タブ → 同じWi-Fiの2台 → 別ネットワークの順にテストし、コードの不具合とNAT/TURNの問題を切り分けた
+
+---
+
+# セットアップ
+
 ## 構成
 
 ```
